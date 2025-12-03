@@ -1,6 +1,6 @@
 # RouteFinder
 
-[![arXiv](https://img.shields.io/badge/arXiv-2406.15007-b31b1b.svg)](https://arxiv.org/abs/2406.15007) [![OpenReview](https://img.shields.io/badge/⚖️-OpenReview-8b1b16)](https://openreview.net/forum?id=QzGLoaOPiY) [![Slack](https://img.shields.io/badge/slack-chat-611f69.svg?logo=slack)](https://join.slack.com/t/rl4co/shared_invite/zt-3jsdjs3ec-3KHdV3HwanL884mq_9tyYw)
+[![arXiv](https://img.shields.io/badge/arXiv-2406.15007-b31b1b.svg)](https://arxiv.org/abs/2406.15007) [![OpenReview](https://img.shields.io/badge/⚖️-OpenReview-8b1b16)](https://openreview.net/forum?id=QzGLoaOPiY) [![Slack](https://img.shields.io/badge/slack-chat-611f69.svg?logo=slack)](https://join.slack.com/t/ai4co-community/shared_invite/zt-3jsdjs3ec-3KHdV3HwanL884mq_9tyYw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](https://opensource.org/licenses/MIT)[![Test](https://github.com/ai4co/routefinder/actions/workflows/tests.yml/badge.svg)](https://github.com/ai4co/routefinder/actions/workflows/tests.yml)<a href="https://colab.research.google.com/github/ai4co/routefinder/blob/main/examples/1.quickstart.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>[![HuggingFace Models](https://img.shields.io/badge/%F0%9F%A4%97-Models-yellow)](https://huggingface.co/ai4co/routefinder)[![HuggingFace Dataset](https://img.shields.io/badge/%F0%9F%A4%97-Dataset-yellow)](https://huggingface.co/datasets/ai4co/routefinder)
 
 _Towards Foundation Models for Vehicle Routing Problems_
