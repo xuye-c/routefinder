@@ -8,8 +8,11 @@ import torch
 
 from torch.serialization import add_safe_globals #
 from routefinder.envs.mtvrp.env import MTVRPEnv #
+from rl4co.data.dataset import TensorDictDataset    #
 
-add_safe_globals([MTVRPEnv]) #
+add_safe_globals([MTVRPEnv,
+                  TensorDictDataset,
+                  ]) #
 
 
 
