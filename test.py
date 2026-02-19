@@ -6,6 +6,10 @@ import warnings
 
 import torch
 
+import torchrl.data.tensor_specs as ts#
+
+ts.CompositeSpec = ts.Composite#
+
 
 
 from rl4co.data.transforms import StateAugmentation
