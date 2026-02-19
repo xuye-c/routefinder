@@ -6,6 +6,13 @@ import warnings
 
 import torch
 
+from torch.serialization import add_safe_globals #
+from routefinder.envs.mtvrp.env import MTVRPEnv #
+
+add_safe_globals([MTVRPEnv]) #
+
+
+
 from rl4co.data.transforms import StateAugmentation
 from rl4co.utils.ops import gather_by_index, unbatchify
 from tqdm.auto import tqdm
@@ -24,6 +31,7 @@ except AttributeError:
     pass
 
 torch.set_float32_matmul_precision("medium")
+
 
 
 def test(
