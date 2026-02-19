@@ -6,14 +6,6 @@ import warnings
 
 import torch
 
-from torch.serialization import add_safe_globals #
-from routefinder.envs.mtvrp.env import MTVRPEnv #
-from rl4co.data.dataset import TensorDictDataset    #
-
-add_safe_globals([MTVRPEnv,
-                  TensorDictDataset,
-                  ]) #
-
 
 
 from rl4co.data.transforms import StateAugmentation
@@ -194,7 +186,8 @@ if __name__ == "__main__":
         BaseLitModule = RouteFinderBase
 
     model = BaseLitModule.load_from_checkpoint(
-        opts.checkpoint, map_location="cpu", strict=False
+        opts.checkpoint, map_location="cpu", strict=False,
+        weights_only=False, #
     )
 
     env = MTVRPEnv()
