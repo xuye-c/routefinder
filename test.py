@@ -5,7 +5,10 @@ import time
 import warnings
 
 import torch
-
+#//
+from rl4co.data.utils import save_tensordict_to_npz
+from tensordict import TensorDict
+#//
 from rl4co.data.transforms import StateAugmentation
 from rl4co.utils.ops import gather_by_index, unbatchify
 from tqdm.auto import tqdm
@@ -188,7 +191,12 @@ if __name__ == "__main__":
 
     env = MTVRPEnv()
     policy = model.policy.to(device).eval()  # Use mixed precision if supported
-
+#///
+    # Prepare per-checkpoint output directory (one folder per model)
+    checkpoint_name = opts.checkpoint.split("/")[-1].split(".")[0]
+    sol_savedir = os.path.join("results", "solutions", checkpoint_name)
+    os.makedirs(sol_savedir, exist_ok=True)
+#////
     results = {}
     for dataset in tqdm(data_paths):
 
@@ -212,7 +220,43 @@ if __name__ == "__main__":
         print(
             f"{dataset_name} | Cost: {-out['max_aug_reward'].mean().item():.3f} | Gap: {out['gap_to_bks'].mean().item():.3f}% | Inference time: {inference_time:.3f} s"
         )
+#////
+        # Save per-dataset solutions (actions, costs, time) so they match baseline outputs
+        try:
+            actions_list = []
+            for o in res:
+                a = None
+                if o.get("best_aug_actions", None) is not None:
+                    a = o["best_aug_actions"]
+                elif o.get("best_multistart_actions", None) is not None:
+                    a = o["best_multistart_actions"]
+                elif o.get("actions", None) is not None:
+                    a = o["actions"]
+                if a is None:
+                    continue
+                if a.dim() > 2:
+                    a = a.view(a.shape[0], -1)
+                actions_list.append(a.cpu())
 
+            if len(actions_list) > 0:
+                actions_td = torch.cat(actions_list, dim=0)
+                costs_td = (-out["max_aug_reward"].cpu())
+                dataset_basename = os.path.basename(dataset)
+                sol_fname = dataset_basename.replace(".npz", "_sol_pyvrp.npz")
+                sol_fpath = os.path.join(sol_savedir, sol_fname)
+                out_td = TensorDict(
+                    {
+                        "actions": actions_td.long(),
+                        "costs": costs_td.float(),
+                        "time": float(inference_time),
+                    },
+                    batch_size=[],
+                )
+                save_tensordict_to_npz(out_td, sol_fpath)
+                print(f"Saved solution file to {sol_fpath}")
+        except Exception as e:
+            print("Warning: could not save solution npz:", e)
+#////
         if results.get(dataset_name, None) is None:
             results[dataset_name] = {}
         results[dataset_name]["cost"] = -out["max_aug_reward"].mean().item()
