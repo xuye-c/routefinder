@@ -6,12 +6,6 @@ import warnings
 
 import torch
 
-import torchrl.data.tensor_specs as ts#
-
-ts.CompositeSpec = ts.Composite#
-
-
-
 from rl4co.data.transforms import StateAugmentation
 from rl4co.utils.ops import gather_by_index, unbatchify
 from tqdm.auto import tqdm
@@ -30,7 +24,6 @@ except AttributeError:
     pass
 
 torch.set_float32_matmul_precision("medium")
-
 
 
 def test(
@@ -190,8 +183,7 @@ if __name__ == "__main__":
         BaseLitModule = RouteFinderBase
 
     model = BaseLitModule.load_from_checkpoint(
-        opts.checkpoint, map_location="cpu", strict=False,
-        weights_only=False, #
+        opts.checkpoint, map_location="cpu", strict=False
     )
 
     env = MTVRPEnv()
