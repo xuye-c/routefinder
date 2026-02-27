@@ -240,8 +240,8 @@ if __name__ == "__main__":
             if len(actions_list) > 0:
                 actions_td = torch.cat(actions_list, dim=0)
                 costs_td = (-out["max_aug_reward"].cpu())
-                dataset_basename = os.path.basename(dataset)
-                sol_fname = dataset_basename.replace(".npz", "_sol_pyvrp.npz")
+                # Use dataset/variant name so each VRP variant gets its own file
+                sol_fname = f"{dataset_name.lower()}_{opts.size}_sol.npz"
                 sol_fpath = os.path.join(sol_savedir, sol_fname)
                 out_td = TensorDict(
                     {
