@@ -239,6 +239,16 @@ if __name__ == "__main__":
 
             if len(actions_list) > 0:
                 actions_td = torch.cat(actions_list, dim=0)
+                # If the last column is all zeros (possible extra depot/padding), remove it
+                try:
+                    if actions_td.dim() == 2 and torch.all(actions_td[:, -1] == 0):
+                        actions_td = actions_td[:, :-1]
+                        print("Trimmed last zero column from actions (2D)")
+                    elif actions_td.dim() == 3 and torch.all(actions_td[:, :, -1] == 0):
+                        actions_td = actions_td[:, :, :-1]
+                        print("Trimmed last zero column from actions (3D)")
+                except Exception:
+                    pass
                 costs_td = (-out["max_aug_reward"].cpu())
                 # Use dataset/variant name so each VRP variant gets its own file
                 sol_fname = f"{dataset_name.lower()}_{opts.size}_sol.npz"
@@ -247,7 +257,8 @@ if __name__ == "__main__":
                     {
                         "actions": actions_td.long(),
                         "costs": costs_td.float(),
-                        "time": float(inference_time),
+                        #"time": float(inference_time),
+                        "time": torch.full((actions_td.shape[0],), float(inference_time), dtype=torch.float32)
                     },
                     batch_size=[],
                 )
