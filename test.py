@@ -5,10 +5,9 @@ import time
 import warnings
 
 import torch
-#//
 from rl4co.data.utils import save_tensordict_to_npz
 from tensordict import TensorDict
-#//
+
 from rl4co.data.transforms import StateAugmentation
 from rl4co.utils.ops import gather_by_index, unbatchify
 from tqdm.auto import tqdm
@@ -191,12 +190,12 @@ if __name__ == "__main__":
 
     env = MTVRPEnv()
     policy = model.policy.to(device).eval()  # Use mixed precision if supported
-#///
-    # Prepare per-checkpoint output directory (one folder per model)
+
+    # per-checkpoint solutions directory
     checkpoint_name = opts.checkpoint.split("/")[-1].split(".")[0]
     sol_savedir = os.path.join("results", "solutions", checkpoint_name)
     os.makedirs(sol_savedir, exist_ok=True)
-#////
+
     results = {}
     for dataset in tqdm(data_paths):
 
@@ -220,8 +219,8 @@ if __name__ == "__main__":
         print(
             f"{dataset_name} | Cost: {-out['max_aug_reward'].mean().item():.3f} | Gap: {out['gap_to_bks'].mean().item():.3f}% | Inference time: {inference_time:.3f} s"
         )
-#////
-        # Save per-dataset solutions (actions, costs, time) so they match baseline outputs
+
+        # Save per-dataset solutions (actions, costs, time) in per-checkpoint folder
         try:
             actions_list = []
             for o in res:
