@@ -51,8 +51,16 @@ def test(
             if num_augment > 1:
                 td = StateAugmentation(num_augment=num_augment, augment_fn=augment_fn)(td)
 
+            # Measure inference time
+            start_time = time.time()
+
             # Evaluate policy
             out = policy(td, env, phase="test", num_starts=n_start, return_actions=True)
+
+            end_time = time.time()
+            runtime = end_time - start_time
+            per_instance_runtime = torch.full((td.batch_size[0],), runtime / td.batch_size[0], device=td.device)
+            out["per_instance_runtime"] = per_instance_runtime
 
             # Unbatchify reward to [batch_size, num_augment, num_starts].
             reward = unbatchify(out["reward"], (num_augment, n_start))
@@ -212,6 +220,7 @@ if __name__ == "__main__":
         out = {}
         out["max_aug_reward"] = torch.cat([o["max_aug_reward"] for o in res])
         out["gap_to_bks"] = torch.cat([o["gap_to_bks"] for o in res])
+        out["per_instance_runtime"] = torch.cat([o["per_instance_runtime"] for o in res])
             
         inference_time = time.time() - start
 
@@ -219,6 +228,8 @@ if __name__ == "__main__":
         print(
             f"{dataset_name} | Cost: {-out['max_aug_reward'].mean().item():.3f} | Gap: {out['gap_to_bks'].mean().item():.3f}% | Inference time: {inference_time:.3f} s"
         )
+
+
 
         # Save per-dataset solutions (actions, costs, time) in per-checkpoint folder
         try:
@@ -247,7 +258,7 @@ if __name__ == "__main__":
                     {
                         "actions": actions_td.long(),
                         "costs": costs_td.float(),
-                        "time": float(inference_time),
+                        "time": out["per_instance_runtime"].cpu(),
                     },
                     batch_size=[],
                 )
