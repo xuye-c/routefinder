@@ -201,7 +201,7 @@ if __name__ == "__main__":
 
     # per-checkpoint solutions directory
     checkpoint_name = opts.checkpoint.split("/")[-1].split(".")[0]
-    sol_savedir = os.path.join("results", "solutions", checkpoint_name)
+    sol_savedir = os.path.join("results", "solutions", str(opts.size), checkpoint_name)
     os.makedirs(sol_savedir, exist_ok=True)
 
     results = {}
