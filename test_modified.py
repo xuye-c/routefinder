@@ -65,54 +65,14 @@ def test(
             # Combine outputs
             out = {}
             for key in outs[0].keys():
-                if key == "actions":
-                    # Handle actions separately if needed
+                try:
                     out[key] = torch.cat([o[key] for o in outs], dim=0)
-                else:
-                    try:
-                        out[key] = torch.cat([o[key] for o in outs], dim=0)
-                    except:
-                        # For non-tensor outputs, take the first
-                        out[key] = outs[0][key]
-
+                except:
+                    out[key] = [o[key] for o in outs]
             out["per_instance_runtime"] = torch.tensor(per_instance_runtimes, device=td.device)
 
             # Unbatchify reward to [batch_size, num_augment, num_starts].
             reward = unbatchify(out["reward"], (num_augment, n_start))
-
-            if n_start > 1:
-                # max multi-start reward
-                max_reward, max_idxs = reward.max(dim=-1)
-                out.update({"max_reward": max_reward})
-
-                if out.get("actions", None) is not None:
-                    # Reshape batch to [batch_size, num_augment, num_starts, ...]
-                    actions = unbatchify(out["actions"], (num_augment, n_start))
-                    out.update(
-                        {
-                            "best_multistart_actions": gather_by_index(
-                                actions, max_idxs, dim=max_idxs.dim()
-                            )
-                        }
-                    )
-                    out["actions"] = actions
-
-            # Get augmentation score only during inference
-            if num_augment > 1:
-                # If multistart is enabled, we use the best multistart rewards
-                reward_ = max_reward if n_start > 1 else reward
-                max_aug_reward, max_idxs = reward_.max(dim=1)
-                out.update({"max_aug_reward": max_aug_reward})
-
-                # If costs_bks is available, we calculate the gap to BKS
-                if costs_bks is not None:
-                    # note: torch.abs is here as a temporary fix, since we forgot to
-                    # convert rewards to costs. Does not affect the results.
-                    gap_to_bks = (
-                        100
-                        * (-max_aug_reward - torch.abs(costs_bks))
-                        / torch.abs(costs_bks)
-                    )
 
             if n_start > 1:
                 # max multi-start reward
