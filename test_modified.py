@@ -81,7 +81,13 @@ def test(
 
                 if out.get("actions", None) is not None:
                     # Reshape batch to [batch_size, num_augment, num_starts, ...]
-                    actions = unbatchify(out["actions"], (num_augment, n_start))
+                    #actions = unbatchify(out["actions"], (num_augment, n_start))
+                    actions = out["actions"]
+
+                    if isinstance(actions, list):
+                        actions = torch.cat(actions, dim=0)
+
+                    actions = unbatchify(actions, (num_augment, n_start))
                     out.update(
                         {
                             "best_multistart_actions": gather_by_index(
