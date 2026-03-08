@@ -51,19 +51,68 @@ def test(
             if num_augment > 1:
                 td = StateAugmentation(num_augment=num_augment, augment_fn=augment_fn)(td)
 
-            # Measure inference time
-            start_time = time.time()
+            # For precise per-instance runtime, process each instance individually
+            per_instance_runtimes = []
+            outs = []
+            for i in range(td.batch_size[0]):
+                single_td = td[i:i+1]
+                start_time = time.time()
+                single_out = policy(single_td, env, phase="test", num_starts=n_start, return_actions=True)
+                end_time = time.time()
+                per_instance_runtimes.append(end_time - start_time)
+                outs.append(single_out)
 
-            # Evaluate policy
-            out = policy(td, env, phase="test", num_starts=n_start, return_actions=True)
+            # Combine outputs
+            out = {}
+            for key in outs[0].keys():
+                if key == "actions":
+                    # Handle actions separately if needed
+                    out[key] = torch.cat([o[key] for o in outs], dim=0)
+                else:
+                    try:
+                        out[key] = torch.cat([o[key] for o in outs], dim=0)
+                    except:
+                        # For non-tensor outputs, take the first
+                        out[key] = outs[0][key]
 
-            end_time = time.time()
-            runtime = end_time - start_time
-            per_instance_runtime = torch.full((td.batch_size[0],), runtime / td.batch_size[0], device=td.device)
-            out["per_instance_runtime"] = per_instance_runtime
+            out["per_instance_runtime"] = torch.tensor(per_instance_runtimes, device=td.device)
 
             # Unbatchify reward to [batch_size, num_augment, num_starts].
             reward = unbatchify(out["reward"], (num_augment, n_start))
+
+            if n_start > 1:
+                # max multi-start reward
+                max_reward, max_idxs = reward.max(dim=-1)
+                out.update({"max_reward": max_reward})
+
+                if out.get("actions", None) is not None:
+                    # Reshape batch to [batch_size, num_augment, num_starts, ...]
+                    actions = unbatchify(out["actions"], (num_augment, n_start))
+                    out.update(
+                        {
+                            "best_multistart_actions": gather_by_index(
+                                actions, max_idxs, dim=max_idxs.dim()
+                            )
+                        }
+                    )
+                    out["actions"] = actions
+
+            # Get augmentation score only during inference
+            if num_augment > 1:
+                # If multistart is enabled, we use the best multistart rewards
+                reward_ = max_reward if n_start > 1 else reward
+                max_aug_reward, max_idxs = reward_.max(dim=1)
+                out.update({"max_aug_reward": max_aug_reward})
+
+                # If costs_bks is available, we calculate the gap to BKS
+                if costs_bks is not None:
+                    # note: torch.abs is here as a temporary fix, since we forgot to
+                    # convert rewards to costs. Does not affect the results.
+                    gap_to_bks = (
+                        100
+                        * (-max_aug_reward - torch.abs(costs_bks))
+                        / torch.abs(costs_bks)
+                    )
 
             if n_start > 1:
                 # max multi-start reward
@@ -201,7 +250,7 @@ if __name__ == "__main__":
 
     # per-checkpoint solutions directory
     checkpoint_name = opts.checkpoint.split("/")[-1].split(".")[0]
-    sol_savedir = os.path.join("results", "solutions", checkpoint_name)
+    sol_savedir = os.path.join("results", "solutions", str(opts.size), checkpoint_name)
     os.makedirs(sol_savedir, exist_ok=True)
 
     results = {}
