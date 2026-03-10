@@ -1,7 +1,10 @@
 import numpy as np
 import pyvrp as pyvrp
-
-from pyvrp import Client, Depot, ProblemData, VehicleType, solve as _solve
+#from pyvrp import Client, Depot, ProblemData, VehicleType, solve as _solve
+###
+from pyvrp import Client, ProblemData, VehicleType, solve as _solve
+from pyvrp._pyvrp import Depot
+###
 from pyvrp.stop import MaxRuntime
 from tensordict.tensordict import TensorDict
 from torch import Tensor
