@@ -3,7 +3,7 @@ import sys
 
 # TODO: this is a trick to avoid infinite warnings
 # but should be removed in the future
-sys.stderr = open(os.devnull, "w")
+#sys.stderr = open(os.devnull, "w")
 
 # ruff: noqa: E402
 import time
