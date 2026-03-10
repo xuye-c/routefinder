@@ -194,21 +194,24 @@ if __name__ == "__main__":
 
     os.makedirs(save_dir, exist_ok=True)
 
-    save_path = os.path.join(save_dir, f"{checkpoint_name}.npz")
+    save_path = os.path.join(save_dir, checkpoint_name,f"{checkpoint_name}.npz")##这里这里
 
     # =====================================================
     # Inference
     # =====================================================
 
     all_times = []
-
     for dataset in tqdm(data_paths):
 
         print("Loading", dataset)
 
+        problem_name = dataset.split("/")[1]
+
         td_test = env.load_data(dataset)
 
         dataloader = get_dataloader(td_test, batch_size=opts.batch_size)
+
+        dataset_times = []
 
         for batch in dataloader:
 
@@ -216,23 +219,23 @@ if __name__ == "__main__":
 
             o = test(policy, td, env, device=device)
 
-            all_times.append(o["per_instance_runtime"])
+            dataset_times.append(o["per_instance_runtime"])
 
-    all_times = torch.cat(all_times)
+        dataset_times = torch.cat(dataset_times)
 
-    print(
-        f"Mean runtime: {all_times.mean().item():.6f} s | "
-        f"Median: {all_times.median().item():.6f} s | "
-        f"Max: {all_times.max().item():.6f} s"
-    )
+        save_dir = os.path.join("instance_time", str(opts.size), checkpoint_name)
 
-    # =====================================================
-    # Save NPZ
-    # =====================================================
+        os.makedirs(save_dir, exist_ok=True)
 
-    np.savez(
-        save_path,
-        time=all_times.cpu().numpy()
-    )
+        save_path = os.path.join(save_dir, f"{problem_name}.npz")
 
-    print("Saved instance runtimes to:", save_path)
+        np.savez(
+            save_path,
+            time=dataset_times.cpu().numpy()
+        )
+
+        print(
+            f"{problem_name} | "
+            f"Mean {dataset_times.mean().item():.6f}s | "
+            f"Saved -> {save_path}"
+        )   
