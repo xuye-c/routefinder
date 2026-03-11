@@ -16,6 +16,7 @@ from routefinder.baselines.solve import solve
 from routefinder.envs.mtdvrp import MTVRPEnv
 import numpy as np
 import torch
+from pathlib import Path
 
 # Size to solving time as in paper (seconds)
 size_to_time = {
@@ -37,10 +38,17 @@ if __name__ == "__main__":
     env = MTVRPEnv(check_solution=False)
 
     data_files = []
-    for root, dirs, files in os.walk("data"):
-        for file in files:
-            if file == f"{size}.npz":
-                data_files.append(os.path.join(root, file))
+    data_root = Path("data")
+
+    for problem_dir in data_root.iterdir():
+        if not problem_dir.is_dir():
+            continue
+
+        test_file = problem_dir / "test" / f"{size}.npz"
+
+        if test_file.exists():
+            data_files.append(str(test_file))
+
 
     for file in tqdm(data_files, desc="Collecting instance runtime with " + solver):
 
@@ -74,7 +82,7 @@ if __name__ == "__main__":
 
         # ====== 构造保存路径 ======
 
-        problem_name = os.path.basename(os.path.dirname(file))
+        problem_name = Path(file).parents[1].name
         checkpoint_name = solver
 
         save_dir = os.path.join("instance_time", str(size), checkpoint_name)
