@@ -56,6 +56,8 @@ if __name__ == "__main__":
 
             inst = td_test[i:i+1]
 
+            print("runtime limit:", max_runtime)#
+
             start = time.time()
 
             solve(
