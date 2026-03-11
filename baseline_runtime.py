@@ -49,8 +49,7 @@ if __name__ == "__main__":
         if test_file.exists():
             data_files.append(str(test_file))
 
-
-    for file in tqdm(data_files, desc="Collecting instance runtime with " + solver):
+    for file in data_files:
 
         td_test = load_npz_to_tensordict(file)
         num_problems, _ = td_test["demand_linehaul"].shape
@@ -60,11 +59,9 @@ if __name__ == "__main__":
 
         dataset_times = []
 
-        for i in range(num_problems):
+        for i in tqdm(range(num_problems), desc=file):
 
             inst = td_test[i:i+1]
-
-            print("runtime limit:", max_runtime)#
 
             start = time.time()
 
@@ -80,7 +77,7 @@ if __name__ == "__main__":
 
         dataset_times = torch.tensor(dataset_times)
 
-        # ====== 构造保存路径 ======
+        # ===== 保存 =====
 
         problem_name = Path(file).parents[1].name
         checkpoint_name = solver
