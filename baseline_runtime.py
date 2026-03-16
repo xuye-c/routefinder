@@ -37,59 +37,42 @@ if __name__ == "__main__":
 
     env = MTVRPEnv(check_solution=False)
 
-    data_files = []
-    data_root = Path("data")
+    allowed_problems = {
+    "cvrp", "ovrp", "ovrpb", "ovrpbl", "ovrpbltw", "ovrpbtw",
+    "ovrpl", "ovrpltw", "ovrptw",
+    "vrpb", "vrpbl", "vrpbltw", "vrpbtw", "vrpl", "vrpltw", "vrptw"
+}
 
-    for problem_dir in data_root.iterdir():
-        if not problem_dir.is_dir():
-            continue
+data_files = []
+data_root = Path("data")
 
-        test_file = problem_dir / "test" / f"{size}.npz"
+for problem_dir in data_root.iterdir():
+    if not problem_dir.is_dir() or problem_dir.name not in allowed_problems:
+        continue
+    test_file = problem_dir / "test" / f"{size}.npz"
+    if test_file.exists():
+        data_files.append(str(test_file))
 
-        if test_file.exists():
-            data_files.append(str(test_file))
+for file in data_files:
+    td_test = load_npz_to_tensordict(file)
+    num_problems, _ = td_test["demand_linehaul"].shape
+    max_runtime = size_to_time[size]
 
-    for file in data_files:
+    td_test = env.reset(td_test)
+    dataset_times = []
 
-        td_test = load_npz_to_tensordict(file)
-        num_problems, _ = td_test["demand_linehaul"].shape
-        max_runtime = size_to_time[size]
+    for i in tqdm(range(num_problems), desc=file):
+        inst = td_test[i:i+1]
+        start = time.time()
+        solve(inst, max_runtime=max_runtime, num_procs=1, solver=solver)
+        dataset_times.append(time.time() - start)
 
-        td_test = env.reset(td_test)
+    dataset_times = torch.tensor(dataset_times)
 
-        dataset_times = []
+    problem_name = Path(file).parents[1].name
+    save_dir = os.path.join("instance_time", str(size), solver)
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f"{problem_name}.npz")
 
-        for i in tqdm(range(num_problems), desc=file):
-
-            inst = td_test[i:i+1]
-
-            start = time.time()
-
-            solve(
-                inst,
-                max_runtime=max_runtime,
-                num_procs=1,
-                solver=solver
-            )
-
-            runtime = time.time() - start
-            dataset_times.append(runtime)
-
-        dataset_times = torch.tensor(dataset_times)
-
-        # ===== 保存 =====
-
-        problem_name = Path(file).parents[1].name
-        checkpoint_name = solver
-
-        save_dir = os.path.join("instance_time", str(size), checkpoint_name)
-        os.makedirs(save_dir, exist_ok=True)
-
-        save_path = os.path.join(save_dir, f"{problem_name}.npz")
-
-        np.savez(
-            save_path,
-            time=dataset_times.cpu().numpy()
-        )
-
-        print("Saved:", save_path)
+    np.savez(save_path, time=dataset_times.cpu().numpy())
+    print("Saved:", save_path)
