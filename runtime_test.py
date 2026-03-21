@@ -223,7 +223,7 @@ if __name__ == "__main__":
 
         dataset_times = torch.cat(dataset_times)
 
-        save_dir = os.path.join("instance_time", str(opts.size), checkpoint_name)
+        save_dir = os.path.join("instance_time1", str(opts.size), checkpoint_name)
 
         os.makedirs(save_dir, exist_ok=True)
 

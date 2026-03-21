@@ -70,7 +70,7 @@ for file in data_files:
     dataset_times = torch.tensor(dataset_times)
 
     problem_name = Path(file).parents[1].name
-    save_dir = os.path.join("instance_time", str(size), solver)
+    save_dir = os.path.join("instance_time1", str(size), solver)
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, f"{problem_name}.npz")
 
