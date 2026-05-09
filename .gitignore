@@ -176,3 +176,7 @@ outputs/
 
 # uv
 uv.lock
+
+#result file
+*.csv
+*.parquet
