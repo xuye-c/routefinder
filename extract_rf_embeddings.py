@@ -214,7 +214,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="routefinder/checkpoints/50/rf-transformer.ckpt",
+        default="checkpoints/50/rf-transformer.ckpt",
     )
     parser.add_argument("--problem", type=str, default="all")
     parser.add_argument("--size", type=int, default=50)
