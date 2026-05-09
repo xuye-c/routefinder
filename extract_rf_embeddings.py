@@ -13,6 +13,34 @@ from routefinder.models.baselines.mvmoe import MVMoE
 
 torch.set_float32_matmul_precision("medium")
 
+PROBLEM_TYPES = [
+    "cvrp", "ovrp", "ovrpb", "ovrpbl", "ovrpbltw", "ovrpbtw",
+    "ovrpl", "ovrpltw", "ovrptw",
+    "vrpb", "vrpbl", "vrpbltw", "vrpbtw", "vrpl", "vrpltw", "vrptw",
+]
+
+
+def get_dataset_paths(problem, size):
+    if problem != "all":
+        return [f"data/{problem}/test/{size}.npz"]
+
+    data_paths = []
+
+    for problem_type in PROBLEM_TYPES:
+        fp = f"data/{problem_type}/test/{size}.npz"
+        if os.path.exists(fp):
+            data_paths.append(fp)
+        else:
+            print(f"[WARN] missing: {fp}")
+
+    if len(data_paths) == 0:
+        raise FileNotFoundError("No datasets found.")
+
+    print(f"Using {len(data_paths)} datasets:")
+    for p in data_paths:
+        print(" ", p)
+
+    return data_paths
 
 def get_base_lit_module(checkpoint_path):
     if "mvmoe" in checkpoint_path:
@@ -23,30 +51,6 @@ def get_base_lit_module(checkpoint_path):
         return RouteFinderMoE
     else:
         return RouteFinderBase
-
-
-def get_dataset_paths(problem, size):
-    if problem != "all":
-        return [f"data/{problem}/test/{size}.npz"]
-
-    data_paths = []
-
-    for root, _, files in os.walk("data"):
-        for file in files:
-            if "test" not in root:
-                continue
-            if file not in ["50.npz", "100.npz"]:
-                continue
-            if str(size) not in file:
-                continue
-            data_paths.append(os.path.join(root, file))
-
-    data_paths = sorted(sorted(data_paths), key=lambda x: len(x))
-
-    if len(data_paths) == 0:
-        raise FileNotFoundError("No datasets found.")
-
-    return data_paths
 
 
 def dataset_to_type_size(dataset_path):
