@@ -42,6 +42,7 @@ def get_dataset_paths(problem, size):
 
     return data_paths
 
+
 def get_base_lit_module(checkpoint_path):
     if "mvmoe" in checkpoint_path:
         return MVMoE
@@ -59,6 +60,50 @@ def dataset_to_type_size(dataset_path):
     problem_type = parts[-3]
     size = parts[-1].replace(".npz", "")
     return problem_type, size
+
+
+def pool_embeddings(x, pooling):
+    """
+    x shape: [B, N, H]
+    return shape:
+      mean/depot: [B, H]
+      mean_max:   [B, 2H]
+      stats:      [B, 8H]
+    """
+    if pooling == "mean":
+        return x.mean(dim=1)
+
+    if pooling == "depot":
+        return x[:, 0, :]
+
+    if pooling == "mean_max":
+        return torch.cat(
+            [
+                x.mean(dim=1),
+                x.max(dim=1).values,
+            ],
+            dim=-1,
+        )
+
+    if pooling == "stats":
+        x_min = x.min(dim=1).values
+        x_max = x.max(dim=1).values
+
+        return torch.cat(
+            [
+                x.mean(dim=1),
+                x.std(dim=1),
+                x_min,
+                x_max,
+                x_max - x_min,
+                torch.quantile(x, 0.25, dim=1),
+                torch.quantile(x, 0.50, dim=1),
+                torch.quantile(x, 0.75, dim=1),
+            ],
+            dim=-1,
+        )
+
+    raise ValueError(f"Unknown pooling: {pooling}")
 
 
 def extract_embeddings(
@@ -124,32 +169,8 @@ def extract_embeddings(
                 # init_h: initial node embedding [B, N, H]
                 h, init_h = policy.encoder(td)
 
-                if pooling == "mean":
-                    emb = h.mean(dim=1)
-                    init_emb = init_h.mean(dim=1)
-
-                elif pooling == "depot":
-                    emb = h[:, 0, :]
-                    init_emb = init_h[:, 0, :]
-
-                elif pooling == "mean_max":
-                    emb = torch.cat(
-                        [
-                            h.mean(dim=1),
-                            h.max(dim=1).values,
-                        ],
-                        dim=-1,
-                    )
-                    init_emb = torch.cat(
-                        [
-                            init_h.mean(dim=1),
-                            init_h.max(dim=1).values,
-                        ],
-                        dim=-1,
-                    )
-
-                else:
-                    raise ValueError(f"Unknown pooling: {pooling}")
+                emb = pool_embeddings(h, pooling)
+                init_emb = pool_embeddings(init_h, pooling)
 
                 emb_np = emb.detach().cpu().float().numpy()
                 init_emb_np = init_emb.detach().cpu().float().numpy()
@@ -227,8 +248,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--pooling",
         type=str,
-        default="mean",
-        choices=["mean", "depot", "mean_max"],
+        default="stats",
+        choices=["mean", "depot", "mean_max", "stats"],
     )
     parser.add_argument("--out_dir", type=str, default="encoder_embeddings")
 
