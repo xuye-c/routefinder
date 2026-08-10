@@ -10,6 +10,16 @@ from routefinder.models import RouteFinderBase, RouteFinderMoE
 from routefinder.models.baselines.mtpomo import MTPOMO
 from routefinder.models.baselines.mvmoe import MVMoE
 
+import functools
+
+_original_torch_load = torch.load
+
+@functools.wraps(_original_torch_load)
+def _torch_load_compat(*args, **kwargs):
+    kwargs.setdefault("weights_only", False)
+    return _original_torch_load(*args, **kwargs)
+
+torch.load = _torch_load_compat
 
 torch.set_float32_matmul_precision("medium")
 
