@@ -377,9 +377,4 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         device=args.device,
         out_dir=args.out_dir,
-        problem=args.problem,
-        size=args.size,
-        batch_size=args.batch_size,
-        device=args.device,
-        out_dir=args.out_dir,
     )
