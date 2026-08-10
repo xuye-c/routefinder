@@ -73,19 +73,7 @@ def pool_embeddings(x, pooling):
     if pooling == "mean":
         return x.mean(dim=1)
 
-    if pooling == "depot":
-        return x[:, 0, :]
-
-    if pooling == "mean_max":
-        return torch.cat(
-            [
-                x.mean(dim=1),
-                x.max(dim=1).values,
-            ],
-            dim=-1,
-        )
-
-    if pooling == "stats":
+    elif pooling == "stats":
         x_min = x.min(dim=1).values
         x_max = x.max(dim=1).values
 
@@ -103,7 +91,7 @@ def pool_embeddings(x, pooling):
             dim=-1,
         )
 
-    raise ValueError(f"Unknown pooling: {pooling}")
+    else: raise ValueError(f"Unknown pooling: {pooling}")
 
 
 def extract_embeddings(
@@ -134,9 +122,6 @@ def extract_embeddings(
 
     env = MTVRPEnv()
     policy = model.policy.to(device).eval()
-
-    if not hasattr(policy, "encoder"):
-        raise AttributeError("policy has no encoder attribute.")
 
     data_paths = get_dataset_paths(problem, size)
 
@@ -239,17 +224,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints/50/rf-transformer.ckpt",
+        default="checkpoints/100/rf-transformer.ckpt",
     )
     parser.add_argument("--problem", type=str, default="all")
-    parser.add_argument("--size", type=int, default=50)
+    parser.add_argument("--size", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument(
         "--pooling",
         type=str,
-        default="stats",
-        choices=["mean", "depot", "mean_max", "stats"],
+        default="mean",
+        choices=["mean","stats"],
     )
     parser.add_argument("--out_dir", type=str, default="encoder_embeddings")
 
