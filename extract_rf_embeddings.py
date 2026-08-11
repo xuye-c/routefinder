@@ -190,7 +190,7 @@ def extract_embeddings(
 
             out_path = os.path.join(
                 out_dir,
-                f"{problem_type}_{size_str}_{pooling}_rf_transformer_embeddings.npz",
+                f"{problem_type}_{size_str}_{pooling}_mvmoe_embeddings.npz",
             )
 
             np.savez_compressed(
@@ -211,7 +211,7 @@ def extract_embeddings(
 
     all_out_path = os.path.join(
         out_dir,
-        f"all_{size}_{pooling}_rf_transformer_embeddings.npz",
+        f"all_{size}_{pooling}_mvmoe_embeddings.npz",
     )
 
     np.savez_compressed(
