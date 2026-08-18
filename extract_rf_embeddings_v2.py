@@ -9,10 +9,7 @@ from routefinder.models import RouteFinderBase, RouteFinderMoE
 from routefinder.models.baselines.mtpomo import MTPOMO
 from routefinder.models.baselines.mvmoe import MVMoE
 
-
-# ============================================================
 # Compatibility for newer PyTorch
-# ============================================================
 
 _original_torch_load = torch.load
 @functools.wraps(_original_torch_load)
@@ -22,11 +19,6 @@ def _torch_load_compat(*args, **kwargs):
 torch.load = _torch_load_compat
 
 torch.set_float32_matmul_precision("medium")
-
-
-# ============================================================
-# Same variant order as author's notebook
-# ============================================================
 
 PROBLEM_TYPES = [
     "cvrp",
@@ -48,9 +40,6 @@ PROBLEM_TYPES = [
 ]
 
 
-# ============================================================
-# Checkpoint -> Lightning module
-# ============================================================
 
 def get_base_lit_module(checkpoint_path):
 
@@ -62,19 +51,6 @@ def get_base_lit_module(checkpoint_path):
         return RouteFinderMoE
     else:
         return RouteFinderBase
-
-
-# ============================================================
-# Extract final encoder embedding
-#
-# This follows the author's notebook:
-#
-# h = encoder.init_embedding(td)
-# for layer in layers:
-#     h = layer(h)
-#
-# Then mean over nodes.
-# ============================================================
 
 def get_final_encoder_embedding(
     policy,
@@ -121,10 +97,7 @@ def get_final_encoder_embedding(
 
     return mean_embedding.detach().cpu().float().numpy()
 
-
-# ============================================================
 # Random generation mode
-# ============================================================
 
 def extract_random_embeddings(
     checkpoint_path,
@@ -134,10 +107,6 @@ def extract_random_embeddings(
     out_dir="encoder_embeddings",
 ):
 
-    # --------------------------------------------------------
-    # Device
-    # --------------------------------------------------------
-
     if "cuda" in device and torch.cuda.is_available():
         device = torch.device("cuda:0")
     else:
@@ -145,9 +114,6 @@ def extract_random_embeddings(
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # --------------------------------------------------------
-    # Load checkpoint
-    # --------------------------------------------------------
 
     print("=" * 70)
     print("Loading checkpoint:")
@@ -167,17 +133,11 @@ def extract_random_embeddings(
     print("Model loaded.")
     print("Device:", device)
 
-    # --------------------------------------------------------
-    # Storage
-    # --------------------------------------------------------
 
     all_embeddings = []
     all_labels = []
     all_problem_ids = []
 
-    # --------------------------------------------------------
-    # EXACTLY follow author's variant loop
-    # --------------------------------------------------------
 
     for variant in PROBLEM_TYPES:
 
@@ -216,11 +176,6 @@ def extract_random_embeddings(
         )
 
         print("Embedding shape:", embeddings.shape)
-
-        # Should be:
-        #
-        # (100, 128)
-        #
 
         all_embeddings.append(embeddings)
 
