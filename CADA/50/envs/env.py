@@ -176,43 +176,120 @@ class MTVRPEnv(EnvBase):
         )
         td_reset.set("action_mask", self.get_action_mask(td_reset))
         return td_reset
-
+    '''
+    def dataset(self, data_size=None, phase="train"):
+            if phase == "train":
+                td = self.generator(data_size)
+                return td
+            assert phase == 'test'
+            if len(self.test_file)==0:
+                all_test_file = os.listdir(self.data_dir)
+                for file_i in all_test_file:
+                    spilt_file = file_i.split(".")[0].split("_")
+                    if spilt_file[-1] != 'hgs' and spilt_file[-1] != 'uniform' :
+                        continue
+                    s_i, p_i, d_i = int(spilt_file[0]), spilt_file[1], spilt_file[2]
+                    if s_i in self.test_size and p_i in self.test_problem and d_i in self.test_distribution:
+                        self.test_file.append(pjoin(self.data_dir, file_i))
+                        if spilt_file[-1] != 'hgs':#d_i == 'uniform': #
+                            self.test_dataloader_names.append(file_i.split(".")[0])
+                        else: # xxxx_hgs.npz
+                            self.test_dataloader_names.append(file_i.split(".")[0][:-4])
+            dataset = {}
+            for name, _f in zip(self.test_dataloader_names, self.test_file):
+                td = load_npz_to_tensordict(_f).to('cpu') # tensordict # 
+                if data_size is not None and td.batch_size[0] > data_size:
+                    td = td[:data_size]
+                #
+                tmp_size = int(name.split('_')[0])
+                tmp_p = name.split('_')[1]
+                keep_mask = torch.zeros((td.shape[0],5), dtype=torch.bool)
+                for id_, p_tag in enumerate(['c', 'o', 'tw', 'l', 'b']):
+                    keep_mask[:, id_] = True if p_tag in tmp_p else False
+                keep_mask[:, 0:1] = ~ keep_mask[:, 1:2]
+                td['p_s_tag'] = torch.cat((
+                    keep_mask.float(),
+                    torch.full_like(td['open_route'], tmp_size/2000, dtype=torch.float32,device=keep_mask.device)
+                ),dim=-1)
+                dataset[name] = td
+            return dataset # dict{str: td}
+    '''
     def dataset(self, data_size=None, phase="train"):
         if phase == "train":
             td = self.generator(data_size)
             return td
-        assert phase == 'test'
-        if len(self.test_file)==0:
-            all_test_file = os.listdir(self.data_dir)
-            for file_i in all_test_file:
-                spilt_file = file_i.split(".")[0].split("_")
-                if spilt_file[-1] != 'hgs' and spilt_file[-1] != 'uniform' :
-                    continue
-                s_i, p_i, d_i = int(spilt_file[0]), spilt_file[1], spilt_file[2]
-                if s_i in self.test_size and p_i in self.test_problem and d_i in self.test_distribution:
-                    self.test_file.append(pjoin(self.data_dir, file_i))
-                    if spilt_file[-1] != 'hgs':#d_i == 'uniform': #
-                        self.test_dataloader_names.append(file_i.split(".")[0])
-                    else: # xxxx_hgs.npz
-                        self.test_dataloader_names.append(file_i.split(".")[0][:-4])
+
+        assert phase == "test"
+
         dataset = {}
-        for name, _f in zip(self.test_dataloader_names, self.test_file):
-            td = load_npz_to_tensordict(_f).to('cpu') # tensordict # 
-            if data_size is not None and td.batch_size[0] > data_size:
-                td = td[:data_size]
-            #
-            tmp_size = int(name.split('_')[0])
-            tmp_p = name.split('_')[1]
-            keep_mask = torch.zeros((td.shape[0],5), dtype=torch.bool)
-            for id_, p_tag in enumerate(['c', 'o', 'tw', 'l', 'b']):
-                keep_mask[:, id_] = True if p_tag in tmp_p else False
-            keep_mask[:, 0:1] = ~ keep_mask[:, 1:2]
-            td['p_s_tag'] = torch.cat((
-                keep_mask.float(),
-                torch.full_like(td['open_route'], tmp_size/2000, dtype=torch.float32,device=keep_mask.device)
-            ),dim=-1)
-            dataset[name] = td
-        return dataset # dict{str: td}
+
+        # RouteFinder data root:
+        # routefinder/data/{problem}/test/{size}.npz
+        data_root = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../data"
+            )
+        )
+
+        for size in self.test_size:
+            for problem in self.test_problem:
+
+                file_path = os.path.join(
+                    data_root,
+                    problem,
+                    "test",
+                    f"{size}.npz"
+                )
+
+                if not os.path.exists(file_path):
+                    print(f"[WARNING] Test file not found: {file_path}")
+                    continue
+
+                # Load RouteFinder npz
+                td = load_npz_to_tensordict(file_path).to("cpu")
+
+                # Keep only required number of instances
+                if data_size is not None and td.batch_size[0] > data_size:
+                    td = td[:data_size]
+
+                # Cada expects p_s_tag
+                keep_mask = torch.zeros(
+                    (td.shape[0], 5),
+                    dtype=torch.bool
+                )
+
+                for id_, p_tag in enumerate(['c', 'o', 'tw', 'l', 'b']):
+                    keep_mask[:, id_] = p_tag in problem
+
+                # C is the default / closed-route tag
+                keep_mask[:, 0:1] = ~keep_mask[:, 1:2]
+
+                td['p_s_tag'] = torch.cat(
+                    (
+                        keep_mask.float(),
+                        torch.full(
+                            (td.shape[0], 1),
+                            size / 2000,
+                            dtype=torch.float32
+                        )
+                    ),
+                    dim=-1
+                )
+
+                # Cada's test() expects:
+                # size_problem_distribution
+                dataset_name = f"{size}_{problem}_uniform"
+
+                dataset[dataset_name] = td
+
+                print(
+                    f"[DATA] {dataset_name}: "
+                    f"{td.batch_size[0]} instances "
+                    f"from {file_path}"
+                )
+
+        return dataset
 
     @staticmethod
     def get_action_mask(td: TensorDict) -> torch.Tensor:
