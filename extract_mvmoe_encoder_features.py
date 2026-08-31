@@ -509,7 +509,8 @@ if __name__ == "__main__":
         checkpoint_path=args.checkpoint,
         problem=args.problem,
         size=args.size,
-        batch_size=args.batch_size,
+       
+
         device=args.device,
         out_dir=args.out_dir,
     )

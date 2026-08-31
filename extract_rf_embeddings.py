@@ -75,10 +75,6 @@ def dataset_to_type_size(dataset_path):
 def pool_embeddings(x, pooling):
     """
     x shape: [B, N, H]
-    return shape:
-      mean/depot: [B, H]
-      mean_max:   [B, 2H]
-      stats:      [B, 8H]
     """
     if pooling == "mean":
         return x.mean(dim=1)
