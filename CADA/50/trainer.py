@@ -190,249 +190,249 @@ class VRPTrainer:
             if args.ddp: torch.distributed.barrier()
         args.log(" *** Training Done *** ")
     @torch.no_grad()
-def test(self, epoch):
-    args = self.args
-    self.model.eval()
+    def test(self, epoch):
+        args = self.args
+        self.model.eval()
 
-    results = []
+        results = []
 
-    dataset_num = len(self.test_dataloader)
+        dataset_num = len(self.test_dataloader)
 
-    for data_idx, (dataset_name, test_dataloader) in enumerate(self.test_dataloader.items()):
+        for data_idx, (dataset_name, test_dataloader) in enumerate(self.test_dataloader.items()):
 
-        eval_label = (
-            f"Eval {dataset_name:20s} "
-            f"{str(data_idx).zfill(3)}/{str(dataset_num).zfill(3)} "
-            f"|Epoch{str(epoch).zfill(3)}"
-        )
-
-        eval_pbar = tqdm(
-            test_dataloader,
-            bar_format='{desc}|{elapsed}+{remaining}|{n_fmt}/{total_fmt}',
-            leave=False
-        )
-
-        # ============================================================
-        # One dataset
-        # ============================================================
-        instance_offset = 0
-
-        for step, inp in enumerate(eval_pbar):
-
-            if args.skip and step > 1:
-                break
-
-            batch_size = inp.batch_size[0]
-
-            # --------------------------------------------------------
-            # Reset environment using the input instances
-            # --------------------------------------------------------
-            td = self.env.reset(td=inp.to('cuda'))
-
-            # --------------------------------------------------------
-            # 8-fold augmentation
-            # --------------------------------------------------------
-            td = self.augmentation(td)
-
-            if args.ddp:
-                torch.distributed.barrier()
-
-            # --------------------------------------------------------
-            # CADA inference
-            # --------------------------------------------------------
-            out = self.model(td, self.env)
-
-            # out["reward"]:
-            # [repeat_num * num_augment, batch_size]
-            all_reward = out["reward"].view(
-                -1,
-                self.augmentation.num_augment,
-                batch_size
+            eval_label = (
+                f"Eval {dataset_name:20s} "
+                f"{str(data_idx).zfill(3)}/{str(dataset_num).zfill(3)} "
+                f"|Epoch{str(epoch).zfill(3)}"
             )
 
-            # Best POMO solution for each augmentation
-            all_reward, _ = all_reward.max(dim=0)
-            # shape: [num_augment, batch_size]
-
-            # Original solution (augmentation 0)
-            score = -all_reward[0, :].float()
-
-            # Best solution among all 8 augmentations
-            aug_reward, _ = all_reward.max(dim=0)
-            aug_score = -aug_reward.float()
-
-            # --------------------------------------------------------
-            # Save results
-            # --------------------------------------------------------
-            for i in range(batch_size):
-
-                results.append({
-                    "dataset": dataset_name,
-                    "instance_id": instance_offset + i,
-                    "cost": score[i].item(),
-                    "aug_cost": aug_score[i].item(),
-                })
-
-            instance_offset += batch_size
-
-            # --------------------------------------------------------
-            # Progress bar
-            # --------------------------------------------------------
-            eval_pbar.set_description(
-                f"{eval_label} | "
-                f"cost {score.mean().item():.4f} | "
-                f"aug_cost {aug_score.mean().item():.4f}"
+            eval_pbar = tqdm(
+                test_dataloader,
+                bar_format='{desc}|{elapsed}+{remaining}|{n_fmt}/{total_fmt}',
+                leave=False
             )
 
-        args.log(
-            f"{eval_label} | "
-            f"instances {instance_offset}"
-        )
+            # ============================================================
+            # One dataset
+            # ============================================================
+            instance_offset = 0
 
-    # ================================================================
-    # Save all results
-    # ================================================================
+            for step, inp in enumerate(eval_pbar):
 
-    if not args.mute:
+                if args.skip and step > 1:
+                    break
 
-        result_df = pd.DataFrame(results)
+                batch_size = inp.batch_size[0]
 
-        save_path = os.path.join(
-            args.result_dir,
-            f"cada_results_{args.n_size}.csv"
-        )
+                # --------------------------------------------------------
+                # Reset environment using the input instances
+                # --------------------------------------------------------
+                td = self.env.reset(td=inp.to('cuda'))
 
-        result_df.to_csv(
-            save_path,
-            index=False
-        )
+                # --------------------------------------------------------
+                # 8-fold augmentation
+                # --------------------------------------------------------
+                td = self.augmentation(td)
 
-        args.log(
-            f"Saved CADA results to {save_path}"
-        )
-
-    if args.ddp:
-        torch.distributed.barrier()
-    """
-    @torch.no_grad()
-        def test(self, epoch):
-            args = self.args
-            self.model.eval()
-            dataset_num = len(list(self.test_dataloader.keys()))
-            # aug gap dict
-            s_a8gap_dict = {i: [] for i in args.env['test_size']}
-            p_a8gap_dict = {i: [] for i in args.env['test_problem']}
-            d_a8gap_dict = {i: [] for i in args.env['test_distribution']}
-            # gap dict
-            s_gap_dict = {i: [] for i in args.env['test_size']}
-            p_gap_dict = {i: [] for i in args.env['test_problem']}
-            d_gap_dict = {i: [] for i in args.env['test_distribution']}
-            tmp_test_metric_label = ['1g/0gap', '2ag/0aug_gap']
-            # 
-            s_a8gap_dict_excel = {
-                i: dict(
-                    {'problem': args.env['test_problem']},
-                    **{j: [0.]*len(args.env['test_problem']) for j in args.env['test_distribution']}
-                ) for i in args.env['test_size']
-            }
-            s_gap_dict_excel = {
-                i: dict(
-                    {'problem': args.env['test_problem']},
-                    **{j: [0.]*len(args.env['test_problem']) for j in args.env['test_distribution']}
-                ) for i in args.env['test_size']
-            }
-            problem_to_idx = {j: i for i,j in enumerate(args.env['test_problem'])}
-            for data_idx, (dataset_name, test_dataloader) in enumerate(self.test_dataloader.items()):
-                all_metric = []
-                eval_label = f"Eval {dataset_name:7s} {str(data_idx).zfill(3)}/{str(dataset_num).zfill(3)} |Epoch{str(epoch).zfill(3)}/{str(args.trainer_params['epochs']).zfill(3)}|rank{args.rank}"
-                eval_phar = tqdm(test_dataloader, bar_format='{desc}|{elapsed}+{remaining}|{n_fmt}/{total_fmt}', leave=False)
-                # begin one dataset
-                for step, inp in enumerate(eval_phar):
-                    if args.skip and step > 1: break
-                    batch_size = inp.batch_size[0]
-                    td = self.env.reset(td=inp.to('cuda'))
-                    td = self.augmentation(td) #=td.expand(8, batch_size).contiguous().view(8*batch_size,)
-                    if args.ddp: torch.distributed.barrier()
-                    out = self.model(td, self.env) # repeat_num, 8, batch_size
-                    all_reward = out["reward"].view(-1, self.augmentation.num_augment, batch_size)  # repeat_num, 8, batch_size
-                    all_reward, _ = all_reward.max(dim=0)  # aug, batch_size
-                    score = -all_reward[0, :].float() # batch_size
-                    aug_reward, _ = all_reward.max(dim=0)  # batch
-                    aug_score = -aug_reward.float() # batch
-                    # compute gap
-                    opt_score = inp['opt_cost'].to('cuda')  # cpu or cuda ?
-                    gap = ((score - opt_score) * 100 / opt_score).mean().item()
-                    aug_gap = ((aug_score - opt_score) * 100 / opt_score).mean().item()
-                    metric_list = [gap, aug_gap]
-                    # collection result
-                    all_metric.append(metric_list)
-                    # log
-                    metric_info = metric2str(tmp_test_metric_label, metric_list)
-                    eval_phar.set_description(f"🙏> {eval_label}|{metric_info}")
-                # finish solve one dataset
-                # log one dataset
-                if args.ddp: torch.distributed.barrier()
-                metric_mean = torch.tensor(all_metric).mean(dim=0).tolist()  # gap, aug_gap
-                metric_info = metric2str(tmp_test_metric_label, metric_mean)
-                elapsed = f"{tqdm.format_interval(eval_phar.format_dict['elapsed'])}"
-                args.log(f"{eval_label}|{elapsed}|{metric_info}")
-                size,problem,distribution = dataset_name.split('_')
-                size = int(size)
-                if args.ddp:  # compute average metric over all ddp workers
-                    # different workers may have different number of samples so the mean metric is not accurate!
-                    val_tensor = torch.tensor(metric_mean).cuda()
-                    dist.reduce(val_tensor, dst=0) # sum to 0
-                    if args.rank == 0:
-                        num_workers = dist.get_world_size()
-                        metric_avg = (val_tensor / num_workers).tolist()
-                        metric_info = metric2str(tmp_test_metric_label, metric_avg)
-                        args.log(f'***ddp_reduce*** {eval_label}|{elapsed}|{metric_info}')
-                        # update dict
-                        s_a8gap_dict[size].append(metric_avg[1])
-                        p_a8gap_dict[problem].append(metric_avg[1])
-                        d_a8gap_dict[distribution].append(metric_avg[1])
-                        s_gap_dict[size].append(metric_avg[0])
-                        p_gap_dict[problem].append(metric_avg[0])
-                        d_gap_dict[distribution].append(metric_avg[0])
-                        #
-                        s_a8gap_dict_excel[size][distribution][problem_to_idx[problem]]=metric_avg[1]
-                        s_gap_dict_excel[size][distribution][problem_to_idx[problem]]=metric_avg[0]
+                if args.ddp:
                     torch.distributed.barrier()
-                else:
-                    # update dict
-                    s_a8gap_dict[size].append(metric_mean[1])
-                    p_a8gap_dict[problem].append(metric_mean[1])
-                    d_a8gap_dict[distribution].append(metric_mean[1])
-                    s_gap_dict[size].append(metric_mean[0])
-                    p_gap_dict[problem].append(metric_mean[0])
-                    d_gap_dict[distribution].append(metric_mean[0])
-                    #
-                    s_a8gap_dict_excel[size][distribution][problem_to_idx[problem]] = metric_mean[1]
-                    s_gap_dict_excel[size][distribution][problem_to_idx[problem]] = metric_mean[0]
-            if not args.mute:
-                # wandb log all dataset
-                metric_list = []
-                for dict_ in [s_a8gap_dict, s_gap_dict, p_a8gap_dict, p_gap_dict, d_a8gap_dict, d_gap_dict]:
-                    metric_list.extend(torch.tensor(list(dict_.values())).cuda().mean(dim=1).tolist())
-                metric_info = metric2str(args.test_metric_label, metric_list)
-                args.log(metric_info)
-                if args.wandb != '':
-                    wandb.log(
-                        {f'{args.test_metric_label[i]}': metric_list[i] for i in range(len(args.test_metric_label))},
-                        step=epoch
-                    ) # epoch*2
-                # save to excel
-                save_file_name = [
-                    os.path.join(args.result_dir, f'a8gap_{epoch}.xlsx'),
-                    os.path.join(args.result_dir, f'gap_{epoch}.xlsx')
-                ]
-                for file_name, sheet_ in zip(save_file_name, [s_a8gap_dict_excel, s_gap_dict_excel]):
-                    writer = pd.ExcelWriter(file_name)
-                    for sheet_name_, sheet_data_ in sheet_.items():
-                        pd.DataFrame(sheet_data_).to_excel(writer, sheet_name=str(sheet_name_))
-                    writer.close()
-    
-            if args.ddp: torch.distributed.barrier()
-    
-    """
-    
+
+                # --------------------------------------------------------
+                # CADA inference
+                # --------------------------------------------------------
+                out = self.model(td, self.env)
+
+                # out["reward"]:
+                # [repeat_num * num_augment, batch_size]
+                all_reward = out["reward"].view(
+                    -1,
+                    self.augmentation.num_augment,
+                    batch_size
+                )
+
+                # Best POMO solution for each augmentation
+                all_reward, _ = all_reward.max(dim=0)
+                # shape: [num_augment, batch_size]
+
+                # Original solution (augmentation 0)
+                score = -all_reward[0, :].float()
+
+                # Best solution among all 8 augmentations
+                aug_reward, _ = all_reward.max(dim=0)
+                aug_score = -aug_reward.float()
+
+                # --------------------------------------------------------
+                # Save results
+                # --------------------------------------------------------
+                for i in range(batch_size):
+
+                    results.append({
+                        "dataset": dataset_name,
+                        "instance_id": instance_offset + i,
+                        "cost": score[i].item(),
+                        "aug_cost": aug_score[i].item(),
+                    })
+
+                instance_offset += batch_size
+
+                # --------------------------------------------------------
+                # Progress bar
+                # --------------------------------------------------------
+                eval_pbar.set_description(
+                    f"{eval_label} | "
+                    f"cost {score.mean().item():.4f} | "
+                    f"aug_cost {aug_score.mean().item():.4f}"
+                )
+
+            args.log(
+                f"{eval_label} | "
+                f"instances {instance_offset}"
+            )
+
+        # ================================================================
+        # Save all results
+        # ================================================================
+
+        if not args.mute:
+
+            result_df = pd.DataFrame(results)
+
+            save_path = os.path.join(
+                args.result_dir,
+                f"cada_results_{args.n_size}.csv"
+            )
+
+            result_df.to_csv(
+                save_path,
+                index=False
+            )
+
+            args.log(
+                f"Saved CADA results to {save_path}"
+            )
+
+        if args.ddp:
+            torch.distributed.barrier()
+        """
+        @torch.no_grad()
+            def test(self, epoch):
+                args = self.args
+                self.model.eval()
+                dataset_num = len(list(self.test_dataloader.keys()))
+                # aug gap dict
+                s_a8gap_dict = {i: [] for i in args.env['test_size']}
+                p_a8gap_dict = {i: [] for i in args.env['test_problem']}
+                d_a8gap_dict = {i: [] for i in args.env['test_distribution']}
+                # gap dict
+                s_gap_dict = {i: [] for i in args.env['test_size']}
+                p_gap_dict = {i: [] for i in args.env['test_problem']}
+                d_gap_dict = {i: [] for i in args.env['test_distribution']}
+                tmp_test_metric_label = ['1g/0gap', '2ag/0aug_gap']
+                # 
+                s_a8gap_dict_excel = {
+                    i: dict(
+                        {'problem': args.env['test_problem']},
+                        **{j: [0.]*len(args.env['test_problem']) for j in args.env['test_distribution']}
+                    ) for i in args.env['test_size']
+                }
+                s_gap_dict_excel = {
+                    i: dict(
+                        {'problem': args.env['test_problem']},
+                        **{j: [0.]*len(args.env['test_problem']) for j in args.env['test_distribution']}
+                    ) for i in args.env['test_size']
+                }
+                problem_to_idx = {j: i for i,j in enumerate(args.env['test_problem'])}
+                for data_idx, (dataset_name, test_dataloader) in enumerate(self.test_dataloader.items()):
+                    all_metric = []
+                    eval_label = f"Eval {dataset_name:7s} {str(data_idx).zfill(3)}/{str(dataset_num).zfill(3)} |Epoch{str(epoch).zfill(3)}/{str(args.trainer_params['epochs']).zfill(3)}|rank{args.rank}"
+                    eval_phar = tqdm(test_dataloader, bar_format='{desc}|{elapsed}+{remaining}|{n_fmt}/{total_fmt}', leave=False)
+                    # begin one dataset
+                    for step, inp in enumerate(eval_phar):
+                        if args.skip and step > 1: break
+                        batch_size = inp.batch_size[0]
+                        td = self.env.reset(td=inp.to('cuda'))
+                        td = self.augmentation(td) #=td.expand(8, batch_size).contiguous().view(8*batch_size,)
+                        if args.ddp: torch.distributed.barrier()
+                        out = self.model(td, self.env) # repeat_num, 8, batch_size
+                        all_reward = out["reward"].view(-1, self.augmentation.num_augment, batch_size)  # repeat_num, 8, batch_size
+                        all_reward, _ = all_reward.max(dim=0)  # aug, batch_size
+                        score = -all_reward[0, :].float() # batch_size
+                        aug_reward, _ = all_reward.max(dim=0)  # batch
+                        aug_score = -aug_reward.float() # batch
+                        # compute gap
+                        opt_score = inp['opt_cost'].to('cuda')  # cpu or cuda ?
+                        gap = ((score - opt_score) * 100 / opt_score).mean().item()
+                        aug_gap = ((aug_score - opt_score) * 100 / opt_score).mean().item()
+                        metric_list = [gap, aug_gap]
+                        # collection result
+                        all_metric.append(metric_list)
+                        # log
+                        metric_info = metric2str(tmp_test_metric_label, metric_list)
+                        eval_phar.set_description(f"🙏> {eval_label}|{metric_info}")
+                    # finish solve one dataset
+                    # log one dataset
+                    if args.ddp: torch.distributed.barrier()
+                    metric_mean = torch.tensor(all_metric).mean(dim=0).tolist()  # gap, aug_gap
+                    metric_info = metric2str(tmp_test_metric_label, metric_mean)
+                    elapsed = f"{tqdm.format_interval(eval_phar.format_dict['elapsed'])}"
+                    args.log(f"{eval_label}|{elapsed}|{metric_info}")
+                    size,problem,distribution = dataset_name.split('_')
+                    size = int(size)
+                    if args.ddp:  # compute average metric over all ddp workers
+                        # different workers may have different number of samples so the mean metric is not accurate!
+                        val_tensor = torch.tensor(metric_mean).cuda()
+                        dist.reduce(val_tensor, dst=0) # sum to 0
+                        if args.rank == 0:
+                            num_workers = dist.get_world_size()
+                            metric_avg = (val_tensor / num_workers).tolist()
+                            metric_info = metric2str(tmp_test_metric_label, metric_avg)
+                            args.log(f'***ddp_reduce*** {eval_label}|{elapsed}|{metric_info}')
+                            # update dict
+                            s_a8gap_dict[size].append(metric_avg[1])
+                            p_a8gap_dict[problem].append(metric_avg[1])
+                            d_a8gap_dict[distribution].append(metric_avg[1])
+                            s_gap_dict[size].append(metric_avg[0])
+                            p_gap_dict[problem].append(metric_avg[0])
+                            d_gap_dict[distribution].append(metric_avg[0])
+                            #
+                            s_a8gap_dict_excel[size][distribution][problem_to_idx[problem]]=metric_avg[1]
+                            s_gap_dict_excel[size][distribution][problem_to_idx[problem]]=metric_avg[0]
+                        torch.distributed.barrier()
+                    else:
+                        # update dict
+                        s_a8gap_dict[size].append(metric_mean[1])
+                        p_a8gap_dict[problem].append(metric_mean[1])
+                        d_a8gap_dict[distribution].append(metric_mean[1])
+                        s_gap_dict[size].append(metric_mean[0])
+                        p_gap_dict[problem].append(metric_mean[0])
+                        d_gap_dict[distribution].append(metric_mean[0])
+                        #
+                        s_a8gap_dict_excel[size][distribution][problem_to_idx[problem]] = metric_mean[1]
+                        s_gap_dict_excel[size][distribution][problem_to_idx[problem]] = metric_mean[0]
+                if not args.mute:
+                    # wandb log all dataset
+                    metric_list = []
+                    for dict_ in [s_a8gap_dict, s_gap_dict, p_a8gap_dict, p_gap_dict, d_a8gap_dict, d_gap_dict]:
+                        metric_list.extend(torch.tensor(list(dict_.values())).cuda().mean(dim=1).tolist())
+                    metric_info = metric2str(args.test_metric_label, metric_list)
+                    args.log(metric_info)
+                    if args.wandb != '':
+                        wandb.log(
+                            {f'{args.test_metric_label[i]}': metric_list[i] for i in range(len(args.test_metric_label))},
+                            step=epoch
+                        ) # epoch*2
+                    # save to excel
+                    save_file_name = [
+                        os.path.join(args.result_dir, f'a8gap_{epoch}.xlsx'),
+                        os.path.join(args.result_dir, f'gap_{epoch}.xlsx')
+                    ]
+                    for file_name, sheet_ in zip(save_file_name, [s_a8gap_dict_excel, s_gap_dict_excel]):
+                        writer = pd.ExcelWriter(file_name)
+                        for sheet_name_, sheet_data_ in sheet_.items():
+                            pd.DataFrame(sheet_data_).to_excel(writer, sheet_name=str(sheet_name_))
+                        writer.close()
+        
+                if args.ddp: torch.distributed.barrier()
+        
+        """
+        
