@@ -23,11 +23,16 @@ def fill_missing_vrp_fields(td: TensorDict) -> TensorDict:
     num_nodes = td["locs"].shape[-2]
 
     # No backhaul
-    if "demand_backhaul" not in td.keys():
-        td["demand_backhaul"] = torch.zeros(
-            (*batch_size, num_nodes),
+    if td["demand_linehaul"].shape[-1] == num_nodes - 1:
+        depot_demand = torch.zeros(
+            (*batch_size, 1),
             dtype=td["demand_linehaul"].dtype,
             device=device,
+        )
+
+        td["demand_linehaul"] = torch.cat(
+            [depot_demand, td["demand_linehaul"]],
+            dim=-1,
         )
     if "speed" not in td.keys(): 
         batch_size = td.batch_size 
