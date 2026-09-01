@@ -60,7 +60,7 @@ if __name__ == "__main__":
     # get params
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=64, help="training batch_size per gpu")
-    parser.add_argument("--n_size", type=int, default=50, help="training n size")
+    parser.add_argument("--n_size", type=int, default=100, help="training n size")
     parser.add_argument("--num_workers", type=int, default=0, help="num_workers") # must set to 0
     parser.add_argument("--seed", type=int, default=7, help="seed")
     parser.add_argument("--resume", dest='resume', action='store_true', help="load model")

@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 
 from utils.functions import gather_by_index, get_distance, load_npz_to_tensordict
 from envs.generator import MTVRPGenerator
+from envs.fill_missing_fields import fill_missing_vrp_fields, pad_depot_feature
 
 def get_dataloader(dataset, batch_size, ddp=False, num_workers=0):
     # dataset: dataset /  dict {str:dataset}
@@ -29,7 +30,7 @@ def get_dataloader(dataset, batch_size, ddp=False, num_workers=0):
             collate_fn=return_x,
         )
     if isinstance(dataset, dict):
-        size_bs = {50: 500, 100: 1000, 200: 125, 300: 100}
+        size_bs = {50: 500, 100: 250, 200: 125, 300: 100}
         # size_bs = {50: 500, 100: 250, 200: 85, 300: 100}
         batch_size = [size_bs[int(x.split('_')[0])] for x in list(dataset.keys())]
         return {
@@ -147,26 +148,38 @@ class MTVRPEnv(EnvBase):
     def _reset(self, td: Optional[TensorDict] = None, batch_size: Optional[list] = None, lib_data=False) -> TensorDict:
         device = td.device
         if lib_data == False:
-            # Create reset TensorDict
+            num_nodes = td["locs"].shape[-2]
+            demand_linehaul = pad_depot_feature(td["demand_linehaul"], num_nodes)
+            if "demand_backhaul" in td.keys():
+                demand_backhaul = pad_depot_feature(td["demand_backhaul"], num_nodes)
+            else:
+                demand_backhaul = torch.zeros_like(demand_linehaul)
+
+            reset_data = {
+                "locs": td["locs"],
+                "demand_backhaul": demand_backhaul,
+                "demand_linehaul": demand_linehaul,
+                "distance_limit": td["distance_limit"],
+                "service_time": td["service_time"],
+                "open_route": td["open_route"],
+                "time_windows": td["time_windows"],
+                "vehicle_capacity": td["vehicle_capacity"],
+                "speed": td["speed"],
+                "current_node": torch.zeros((*batch_size,), dtype=torch.long, device=device),
+                "current_route_length": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),
+                "current_time": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),
+                "used_capacity_backhaul": torch.zeros((*batch_size, 1), device=device),
+                "used_capacity_linehaul": torch.zeros((*batch_size, 1), device=device),
+                "visited": torch.zeros(
+                    (*batch_size, td["locs"].shape[-2]),
+                    dtype=torch.bool,
+                    device=device,
+                ),
+            }
+            if "capacity_original" in td.keys():
+                reset_data["capacity_original"] = td["capacity_original"]
             td_reset = TensorDict(
-                {
-                    "locs": td["locs"],
-                    "demand_backhaul": td["demand_backhaul"],
-                    "demand_linehaul": td["demand_linehaul"],
-                    "distance_limit": td["distance_limit"],
-                    "service_time": td["service_time"],
-                    "open_route": td["open_route"],
-                    "time_windows": td["time_windows"],
-                    "vehicle_capacity": td["vehicle_capacity"],
-                    "capacity_original": td["capacity_original"],
-                    "speed": td["speed"],
-                    "current_node": torch.zeros((*batch_size,), dtype=torch.long, device=device),
-                    "current_route_length": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),  # for distance limits
-                    "current_time": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),  # for time windows
-                    "used_capacity_backhaul": torch.zeros((*batch_size, 1), device=device),  # for capacity constraints in backhaul
-                    "used_capacity_linehaul": torch.zeros((*batch_size, 1), device=device),  # for capacity constraints in linehaul
-                    "visited": torch.zeros((*batch_size, td["locs"].shape[-2]), dtype=torch.bool, device=device,),
-                },
+                reset_data,
                 batch_size=batch_size,
                 device=device,
             )
@@ -261,38 +274,72 @@ class MTVRPEnv(EnvBase):
         if phase == "train":
             td = self.generator(data_size)
             return td
-        assert phase == 'test'
-        if len(self.test_file)==0:
-            all_test_file = os.listdir(self.data_dir)
-            for file_i in all_test_file:
-                spilt_file = file_i.split(".")[0].split("_")
-                if spilt_file[-1] != 'hgs' and spilt_file[-1] != 'uniform' :
-                    continue
-                s_i, p_i, d_i = int(spilt_file[0]), spilt_file[1], spilt_file[2]
-                if s_i in self.test_size and p_i in self.test_problem and d_i in self.test_distribution:
-                    self.test_file.append(pjoin(self.data_dir, file_i))
-                    if spilt_file[-1] != 'hgs':#d_i == 'uniform': #
-                        self.test_dataloader_names.append(file_i.split(".")[0])
-                    else: # xxxx_hgs.npz
-                        self.test_dataloader_names.append(file_i.split(".")[0][:-4])
+
+        assert phase == "test"
+
         dataset = {}
-        for name, _f in zip(self.test_dataloader_names, self.test_file):
-            td = load_npz_to_tensordict(_f).to('cpu') # tensordict # 默认应该在cpu上
-            if data_size is not None and td.batch_size[0] > data_size:
-                td = td[:data_size]
-            #
-            tmp_size = int(name.split('_')[0])
-            tmp_p = name.split('_')[1]
-            keep_mask = torch.zeros((td.shape[0],5), dtype=torch.bool)
-            for id_, p_tag in enumerate(['c', 'o', 'tw', 'l', 'b']):
-                keep_mask[:, id_] = True if p_tag in tmp_p else False
-            keep_mask[:, 0:1] = ~ keep_mask[:, 1:2] 
-            td['p_s_tag'] = torch.cat((
-                keep_mask.float(),
-                torch.full_like(td['open_route'], tmp_size/2000, dtype=torch.float32,device=keep_mask.device)
-            ),dim=-1)
-            dataset[name] = td
-        return dataset # dict{str: td}
+
+        # RouteFinder data root:
+        # routefinder/data/{problem}/test/{size}.npz
+        data_root = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../data"
+            )
+        )
+
+        for size in self.test_size:
+            for problem in self.test_problem:
+
+                file_path = os.path.join(
+                    data_root,
+                    problem,
+                    "test",
+                    f"{size}.npz"
+                )
+
+                if not os.path.exists(file_path):
+                    print(f"[WARNING] Test file not found: {file_path}")
+                    continue
+
+                td = load_npz_to_tensordict(file_path).to("cpu")
+                td = fill_missing_vrp_fields(td)
+
+                if data_size is not None and td.batch_size[0] > data_size:
+                    td = td[:data_size]
+
+                keep_mask = torch.zeros(
+                    (td.shape[0], 5),
+                    dtype=torch.bool
+                )
+
+                for id_, p_tag in enumerate(['c', 'o', 'tw', 'l', 'b']):
+                    keep_mask[:, id_] = p_tag in problem
+
+                keep_mask[:, 0:1] = ~keep_mask[:, 1:2]
+
+                td['p_s_tag'] = torch.cat(
+                    (
+                        keep_mask.float(),
+                        torch.full(
+                            (td.shape[0], 1),
+                            size / 2000,
+                            dtype=torch.float32
+                        )
+                    ),
+                    dim=-1
+                )
+
+                dataset_name = f"{size}_{problem}_uniform"
+                dataset[dataset_name] = td
+
+                print(
+                    f"[DATA] {dataset_name}: "
+                    f"{td.batch_size[0]} instances "
+                    f"from {file_path}"
+                )
+
+        return dataset
 
     @staticmethod
     def get_action_mask(td: TensorDict) -> torch.Tensor:

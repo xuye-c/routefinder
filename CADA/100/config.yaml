@@ -27,16 +27,16 @@ trainer_params:
 
 env:
   generator_params: # train param
-    num_loc: 50 # will be reset in run.py based on args.n_size
+    num_loc: 100 # will be reset in run.py based on args.n_size
     variant_preset: "all" #
   test_epoch: [50,100]  # 25 50 test in these epochs
   test_interval: 100 
   test_episodes: 1000 # need set to 1000
   test_batch_size: 200 # will be reset in env.py, function get_dataloader 
-  data_dir: '../data/synthetic_data'
-  test_size_idx: [ # will be reset in run.py
-      0, # 50
-      # 1, # 100
+  data_dir: '../../data'
+  test_size_idx: [ # will be reset in run.py based on args.n_size
+      # 0, # 50
+      1, # 100
       # 2, # 200
       # 3  # 300
   ]
