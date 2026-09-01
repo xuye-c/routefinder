@@ -6,7 +6,6 @@ from typing import Tuple, Union
 from dataclasses import dataclass, fields
 from tensordict import TensorDict
 from torch import Tensor
-from entmax import entmax_bisect, entmax15, sparsemax #, normmax_bisect, budget_bisect
 
 from utils.functions import batchify,gather_by_index,unbatchify,unbatchify_and_gather
 
@@ -333,8 +332,10 @@ def multi_head_attention(q, k, v, ninf_mask=None, sparse=False):
     elif sparse == 'relu':
         weights = nn.ReLU()(score_scaled)**2 # (batch, head_num, n, problem)
     elif sparse == 'entmax15':
+        from entmax import entmax15
         weights = entmax15(score_scaled, dim=3) # (batch, head_num, n, problem)
     elif sparse == 'sparsemax':
+        from entmax import sparsemax
         weights = sparsemax(score_scaled, dim=3) # (batch, head_num, n, problem)
     else:
         raise NotImplementedError
