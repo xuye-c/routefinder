@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 
 from utils.functions import gather_by_index, get_distance, load_npz_to_tensordict
 from envs.generator import MTVRPGenerator
+from envs.fill_missing_fields import fill_missing_vrp_fields
 
 def get_dataloader(dataset, batch_size, ddp=False, num_workers=0):
     # dataset: dataset /  dict {str:dataset}
@@ -152,28 +153,79 @@ class MTVRPEnv(EnvBase):
 
         device = td.device
         # Create reset TensorDict
+        """
         td_reset = TensorDict(
-            {
-                "locs": td["locs"],
-                "demand_backhaul": td["demand_backhaul"],
-                "demand_linehaul": td["demand_linehaul"],
-                "distance_limit": td["distance_limit"],
-                "service_time": td["service_time"],
-                "open_route": td["open_route"],
-                "time_windows": td["time_windows"],
-                "vehicle_capacity": td["vehicle_capacity"],
-                "capacity_original": td["capacity_original"],
-                "speed": td["speed"],
-                "current_node": torch.zeros((*batch_size,), dtype=torch.long, device=device),
-                "current_route_length": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),  # for distance limits
-                "current_time": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),  # for time windows
-                "used_capacity_backhaul": torch.zeros((*batch_size, 1), device=device),  # for capacity constraints in backhaul
-                "used_capacity_linehaul": torch.zeros((*batch_size, 1), device=device),  # for capacity constraints in linehaul
-                "visited": torch.zeros((*batch_size, td["locs"].shape[-2]), dtype=torch.bool, device=device,),
-            },
+                    {
+                        "locs": td["locs"],
+                        "demand_backhaul": td["demand_backhaul"],
+                        "demand_linehaul": td["demand_linehaul"],
+                        "distance_limit": td["distance_limit"],
+                        "service_time": td["service_time"],
+                        "open_route": td["open_route"],
+                        "time_windows": td["time_windows"],
+                        "vehicle_capacity": td["vehicle_capacity"],
+                        "capacity_original": td["capacity_original"],
+                        "speed": td["speed"],
+                        "current_node": torch.zeros((*batch_size,), dtype=torch.long, device=device),
+                        "current_route_length": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),  # for distance limits
+                        "current_time": torch.zeros((*batch_size, 1), dtype=torch.float32, device=device),  # for time windows
+                        "used_capacity_backhaul": torch.zeros((*batch_size, 1), device=device),  # for capacity constraints in backhaul
+                        "used_capacity_linehaul": torch.zeros((*batch_size, 1), device=device),  # for capacity constraints in linehaul
+                        "visited": torch.zeros((*batch_size, td["locs"].shape[-2]), dtype=torch.bool, device=device,),
+                    },
+                    batch_size=batch_size,
+                    device=device,
+                )
+        """
+        reset_data = {
+            "locs": td["locs"],
+            "demand_backhaul": td["demand_backhaul"],
+            "demand_linehaul": td["demand_linehaul"],
+            "distance_limit": td["distance_limit"],
+            "service_time": td["service_time"],
+            "open_route": td["open_route"],
+            "time_windows": td["time_windows"],
+            "vehicle_capacity": td["vehicle_capacity"],
+            
+            "current_node": torch.zeros(
+                (*batch_size,),
+                dtype=torch.long,
+                device=device
+            ),
+            "current_route_length": torch.zeros(
+                (*batch_size, 1),
+                dtype=torch.float32,
+                device=device
+            ),
+            "current_time": torch.zeros(
+                (*batch_size, 1),
+                dtype=torch.float32,
+                device=device
+            ),
+            "used_capacity_backhaul": torch.zeros(
+                (*batch_size, 1),
+                device=device
+            ),
+            "used_capacity_linehaul": torch.zeros(
+                (*batch_size, 1),
+                device=device
+            ),
+            "visited": torch.zeros(
+                (*batch_size, td["locs"].shape[-2]),
+                dtype=torch.bool,
+                device=device,
+            ),
+        }
+
+        if "capacity_original" in td.keys():
+            reset_data["capacity_original"] = td["capacity_original"]
+
+        td_reset = TensorDict(
+            reset_data,
             batch_size=batch_size,
             device=device,
         )
+
         td_reset.set("action_mask", self.get_action_mask(td_reset))
         return td_reset
     '''
@@ -248,6 +300,7 @@ class MTVRPEnv(EnvBase):
 
                 # Load RouteFinder npz
                 td = load_npz_to_tensordict(file_path).to("cpu")
+                td = fill_missing_vrp_fields(td)
 
                 # Keep only required number of instances
                 if data_size is not None and td.batch_size[0] > data_size:
