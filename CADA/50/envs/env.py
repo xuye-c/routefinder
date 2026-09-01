@@ -186,6 +186,7 @@ class MTVRPEnv(EnvBase):
             "open_route": td["open_route"],
             "time_windows": td["time_windows"],
             "vehicle_capacity": td["vehicle_capacity"],
+            "speed": td["speed"],
             
             "current_node": torch.zeros(
                 (*batch_size,),
