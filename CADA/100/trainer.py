@@ -4,12 +4,10 @@ import wandb
 import torch
 import math
 import pickle
-import vrplib
 import pandas as pd
 from tqdm import tqdm
 import torch.nn as nn
 from math import ceil
-from einops import rearrange
 # from torch.optim import Adam, AdamW
 # from torch.optim.lr_scheduler import MultiStepLR
 import torch.distributed as dist
@@ -306,6 +304,9 @@ class VRPTrainer:
     @torch.no_grad()
     def test_lib(self, epoch):
         # with torch.amp.autocast("cuda"):
+        import vrplib
+        from einops import rearrange
+
         args = self.args
         self.model.eval()
         all_test_dataset = [
