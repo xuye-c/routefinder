@@ -2,6 +2,29 @@ import torch
 from tensordict.tensordict import TensorDict
 
 
+def pad_depot_feature(x: torch.Tensor, num_nodes: int) -> torch.Tensor:
+    """Align a per-node feature with locs.
+
+    RouteFinder npz stores customer-only demands of length N.
+    CADA (and locs) use depot + customers, length N+1, with depot first.
+    Already-padded tensors (length == num_nodes) are returned unchanged.
+    """
+    last = x.shape[-1]
+    if last == num_nodes:
+        return x
+    if last == num_nodes - 1:
+        depot = torch.zeros(
+            (*x.shape[:-1], 1),
+            dtype=x.dtype,
+            device=x.device,
+        )
+        return torch.cat([depot, x], dim=-1)
+    raise ValueError(
+        f"Expected last dim {num_nodes} (with depot) or {num_nodes - 1} "
+        f"(customers only), got {tuple(x.shape)}"
+    )
+
+
 def fill_missing_vrp_fields(td: TensorDict) -> TensorDict:
     """
     Fill optional fields omitted by RouteFinder datasets.
@@ -22,36 +45,27 @@ def fill_missing_vrp_fields(td: TensorDict) -> TensorDict:
     batch_size = td.batch_size
     num_nodes = td["locs"].shape[-2]
 
-    # No backhaul
-    if td["demand_linehaul"].shape[-1] == num_nodes - 1:
-        depot_demand = torch.zeros(
-            (*batch_size, 1),
+    # RouteFinder: demand is [B, N] (customers). CADA: [B, N+1] (depot + customers).
+    td["demand_linehaul"] = pad_depot_feature(td["demand_linehaul"], num_nodes)
+    if "demand_backhaul" in td.keys():
+        td["demand_backhaul"] = pad_depot_feature(td["demand_backhaul"], num_nodes)
+    else:
+        td["demand_backhaul"] = torch.zeros(
+            td["demand_linehaul"].shape,
             dtype=td["demand_linehaul"].dtype,
             device=device,
         )
 
-        td["demand_linehaul"] = torch.cat(
-            [depot_demand, td["demand_linehaul"]],
-            dim=-1,
+    if "speed" not in td.keys():
+        td["speed"] = torch.ones(
+            (*batch_size, 1),
+            dtype=torch.float32,
+            device=device,
         )
-    if "demand_backhaul" not in td.keys():
-        td["demand_backhaul"] = torch.zeros(
-            td["demand_linehaul"].shape,
-            dtype=td["demand_linehaul"].dtype,
-            device=td.device,
-        )
-    if "speed" not in td.keys(): 
-        batch_size = td.batch_size 
-        td["speed"] = torch.ones( 
-            (*batch_size, 1), 
-            #td["demand_linehaul"].shape,
-            dtype=torch.float32, 
-            device=td.device, )
     # Closed route by default
     if "open_route" not in td.keys():
         td["open_route"] = torch.zeros(
             (*batch_size, 1),
-            #td["demand_linehaul"].shape,
             dtype=torch.bool,
             device=device,
         )

@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 
 from utils.functions import gather_by_index, get_distance, load_npz_to_tensordict
 from envs.generator import MTVRPGenerator
-from envs.fill_missing_fields import fill_missing_vrp_fields
+from envs.fill_missing_fields import fill_missing_vrp_fields, pad_depot_feature
 
 def get_dataloader(dataset, batch_size, ddp=False, num_workers=0):
     # dataset: dataset /  dict {str:dataset}
@@ -177,10 +177,17 @@ class MTVRPEnv(EnvBase):
                     device=device,
                 )
         """
+        num_nodes = td["locs"].shape[-2]
+        demand_linehaul = pad_depot_feature(td["demand_linehaul"], num_nodes)
+        if "demand_backhaul" in td.keys():
+            demand_backhaul = pad_depot_feature(td["demand_backhaul"], num_nodes)
+        else:
+            demand_backhaul = torch.zeros_like(demand_linehaul)
+
         reset_data = {
             "locs": td["locs"],
-            "demand_backhaul": td["demand_backhaul"],
-            "demand_linehaul": td["demand_linehaul"],
+            "demand_backhaul": demand_backhaul,
+            "demand_linehaul": demand_linehaul,
             "distance_limit": td["distance_limit"],
             "service_time": td["service_time"],
             "open_route": td["open_route"],
