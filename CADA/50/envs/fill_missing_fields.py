@@ -34,16 +34,24 @@ def fill_missing_vrp_fields(td: TensorDict) -> TensorDict:
             [depot_demand, td["demand_linehaul"]],
             dim=-1,
         )
+    if "demand_backhaul" not in td.keys():
+        td["demand_backhaul"] = torch.zeros(
+            td["demand_linehaul"].shape,
+            dtype=td["demand_linehaul"].dtype,
+            device=td.device,
+        )
     if "speed" not in td.keys(): 
         batch_size = td.batch_size 
         td["speed"] = torch.ones( 
             (*batch_size, 1), 
+            #td["demand_linehaul"].shape,
             dtype=torch.float32, 
             device=td.device, )
     # Closed route by default
     if "open_route" not in td.keys():
         td["open_route"] = torch.zeros(
             (*batch_size, 1),
+            #td["demand_linehaul"].shape,
             dtype=torch.bool,
             device=device,
         )
