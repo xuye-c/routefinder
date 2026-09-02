@@ -1,0 +1,39 @@
+# Run outputs (ignore by default)
+result/*
+old_result/**
+graphify-out/
+paper/
+
+# Published checkpoints (epoch 300 only; LFS)
+!result/n=50/
+result/n=50/*
+!result/n=50/2026-0728-0719/
+result/n=50/2026-0728-0719/*
+!result/n=50/2026-0728-0719/checkpoint-300.pt
+!result/n=100/
+result/n=100/*
+!result/n=100/2026-0729-1221/
+result/n=100/2026-0729-1221/*
+!result/n=100/2026-0729-1221/checkpoint-300.pt
+
+# Python bytecode caches (anywhere in the repo)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.idea/
+.cursor/
+AGENTS.md
+
+# Local profiling / experiment scripts
+scripts/
+command.txt
+
+# Images
+figures/
+
+# Cython extension: track sources only, not build artifacts
+search/cython_heuristics/**
+!search/cython_heuristics/heuristics.pyx
+!search/cython_heuristics/setup.py
