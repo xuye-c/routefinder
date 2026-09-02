@@ -121,11 +121,14 @@ class VRPTester:
         # For Excel saving
         excel_data_gap = []  # List of (problem, gap) tuples
         excel_data_a8gap = []  # List of (problem, aug_gap) tuples
+        # Extra per-instance cost export kept separate from aggregate gap Excel outputs.
+        instance_cost_rows = []
 
         tmp_test_metric_label = ["NO_AUG Obj.", "NO_AUG Gap", "AUG Obj.", "AUG Gap"]
         
         for data_idx, (dataset_name, dataloader) in enumerate(test_dataloader.items()):
             all_metric = []
+            instance_offset = 0
             eval_label = f"Eval {dataset_name} {str(data_idx + 1).zfill(3)}/{str(dataset_num).zfill(3)} | Epoch{str(epoch).zfill(3)}"
 
             with Progress(
@@ -200,6 +203,23 @@ class VRPTester:
                     opt_score = opt_cost.to(self.device)
                     gap = gap_percent_mean_torch(score.abs(), opt_score.abs())
                     aug_gap = gap_percent_mean_torch(aug_score.abs(), opt_score.abs())
+
+                    # The batch-aligned objective values are already one-to-one with
+                    # the current batch's opt_cost entries. Save raw per-instance costs
+                    # separately without changing the aggregate metric logic.
+                    batch_size_actual = score.shape[0]
+                    for i in range(batch_size_actual):
+                        instance_cost_rows.append(
+                            {
+                                "problem": dataset_name,
+                                "instance_id": instance_offset + i,
+                                "no_aug_cost": float(score[i].item()),
+                                "aug_cost": float(aug_score[i].item()),
+                                "opt_cost": float(opt_cost[i].item()),
+                            }
+                        )
+                    instance_offset += batch_size_actual
+
                     metric_list = [
                         score.mean().item(),
                         gap,
@@ -282,8 +302,17 @@ class VRPTester:
                 f"{args.result_dir}/a8gap_{epoch}.xlsx", index=False, engine="openpyxl"
             )
 
+            instance_cost_df = pd.DataFrame(
+                instance_cost_rows,
+                columns=["problem", "instance_id", "no_aug_cost", "aug_cost", "opt_cost"],
+            )
+            instance_cost_path = os.path.join(
+                args.result_dir, f"instance_cost_{epoch}.csv"
+            )
+            instance_cost_df.to_csv(instance_cost_path, index=False)
+
             args.log(
-                f"Saved test results to {args.result_dir}/gap_{epoch}.xlsx and a8gap_{epoch}.xlsx"
+                f"Saved test results to {args.result_dir}/gap_{epoch}.xlsx, a8gap_{epoch}.xlsx, and {instance_cost_path}"
             )
 
         # Compute aggregate metrics
