@@ -5,7 +5,9 @@ import sys
 import argparse
 import numpy as np
 import torch
-
+from datetime import datetime
+import run
+from trainer import VRPTrainer
 
 # ============================================================
 # 1. Parse extraction-specific arguments
@@ -91,13 +93,6 @@ def main():
         sys.path.insert(0, POLAR_ROOT)
 
     # --------------------------------------------------------
-    # Import POLAR only after adding POLAR_ROOT
-    # --------------------------------------------------------
-
-    import run
-    from trainer import VRPTrainer
-
-    # --------------------------------------------------------
     # Problem order
     # --------------------------------------------------------
 
@@ -164,12 +159,8 @@ def main():
     args.epoch = EPOCH
     args.path_id = PATH_ID
 
-    args.start_time = run.datetime.now().strftime(
-        "%Y-%m-%d-%H-%M-%S"
-    )
-
+    args.start_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     run.load_config(args)
-
     if args.variant is not None:
         args.tuner_params["variant_present"] = args.variant
 
