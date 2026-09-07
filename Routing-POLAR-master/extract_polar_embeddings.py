@@ -95,7 +95,7 @@ def main():
     # --------------------------------------------------------
 
     import run
-    from trainer import Trainer
+    from trainer import VRPTrainer
 
     # --------------------------------------------------------
     # Problem order
@@ -203,7 +203,7 @@ def main():
     # 4. Construct official POLAR Trainer
     # ========================================================
 
-    trainer = Trainer(args)
+    trainer = VRPTrainer(args)
 
     model = trainer.model
     model.eval()
