@@ -255,7 +255,7 @@ def main():
                 td = batch.to(args.device)
 
                 # PromptNet + PLE Encoder
-                encoder_output = model._encode(td)
+                encoder_output, coords = model._encode(td)
 
                 if encoder_output.ndim != 3:
                     raise RuntimeError(
