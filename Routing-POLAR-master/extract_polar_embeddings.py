@@ -252,14 +252,7 @@ def main():
             print(f"Processing {problem_type}...")
 
             for batch_idx, batch in enumerate(dataloader):
-
-                # Because POLAR's DataLoader uses:
-                # collate_fn=lambda x: x
-                #
-                # `batch` is a list of TensorDict samples.
-                #
-                # Stack them into one TensorDict batch.
-                td = torch.stack(batch).to(args.device)
+                td = batch.to(args.device)
 
                 # PromptNet + PLE Encoder
                 encoder_output = model._encode(td)
