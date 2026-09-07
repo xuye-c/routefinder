@@ -232,77 +232,122 @@ def main():
 
     with torch.inference_mode():
 
-        for batch_idx, batch in enumerate(test_dataloader):
+        for problem_type in PROBLEM_TYPES:
 
-            td = batch.to(args.device)
+            dataloader_name = f"{N_SIZE}_{problem_type}_uniform"
 
-            # PromptNet + PLE Encoder
-            encoder_output = model._encode(td)
-
-            if encoder_output.ndim != 3:
+            if dataloader_name not in test_dataloader:
                 raise RuntimeError(
-                    f"Unexpected encoder output shape: "
-                    f"{encoder_output.shape}"
+                    f"Expected dataloader '{dataloader_name}' not found. "
+                    f"Available dataloaders:\n"
+                    f"{list(test_dataloader.keys())}"
                 )
 
-            batch_size, num_nodes, embedding_dim = (
-                encoder_output.shape
+            dataloader = test_dataloader[dataloader_name]
+
+            problem_embeddings = []
+
+            problem_count = 0
+
+            print(f"Processing {problem_type}...")
+
+            for batch_idx, batch in enumerate(dataloader):
+
+                # Because POLAR's DataLoader uses:
+                # collate_fn=lambda x: x
+                #
+                # `batch` is a list of TensorDict samples.
+                #
+                # Stack them into one TensorDict batch.
+                td = torch.stack(batch).to(args.device)
+
+                # PromptNet + PLE Encoder
+                encoder_output = model._encode(td)
+
+                if encoder_output.ndim != 3:
+                    raise RuntimeError(
+                        f"Unexpected encoder output shape for "
+                        f"{problem_type}: {encoder_output.shape}"
+                    )
+
+                batch_size, num_nodes, embedding_dim = (
+                    encoder_output.shape
+                )
+
+                # Expected:
+                # n_size=50  -> [B, 51, 128]
+                # n_size=100 -> [B, 101, 128]
+
+                expected_nodes = N_SIZE + 1
+
+                if num_nodes != expected_nodes:
+                    raise RuntimeError(
+                        f"Expected {expected_nodes} nodes for "
+                        f"{problem_type}, got {num_nodes}"
+                    )
+
+                if embedding_dim != 128:
+                    raise RuntimeError(
+                        f"Expected embedding dimension 128 for "
+                        f"{problem_type}, got {embedding_dim}"
+                    )
+
+                # Mean pooling over ALL encoder tokens,
+                # including the depot token.
+                embedding = encoder_output.mean(dim=1)
+
+                if embedding.shape != (
+                    batch_size,
+                    128
+                ):
+                    raise RuntimeError(
+                        f"Unexpected pooled embedding shape for "
+                        f"{problem_type}: {embedding.shape}"
+                    )
+
+                embedding = (
+                    embedding
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float32)
+                )
+
+                problem_embeddings.append(embedding)
+
+                problem_count += batch_size
+                global_count += batch_size
+
+                if (
+                    batch_idx == 0
+                    or (batch_idx + 1) % 10 == 0
+                    or problem_count == INSTANCES_PER_PROBLEM
+                ):
+                    print(
+                        f"  Batch {batch_idx + 1:4d} | "
+                        f"instances: "
+                        f"{problem_count:4d}/{INSTANCES_PER_PROBLEM}"
+                    )
+
+            problem_embeddings = np.concatenate(
+                problem_embeddings,
+                axis=0
             )
 
-            # Expected:
-            # n_size=50  -> [B, 51, 128]
-            # n_size=100 -> [B, 101, 128]
-
-            expected_nodes = N_SIZE + 1
-
-            if num_nodes != expected_nodes:
+            if len(problem_embeddings) != INSTANCES_PER_PROBLEM:
                 raise RuntimeError(
-                    f"Expected {expected_nodes} nodes, "
-                    f"got {num_nodes}"
+                    f"{problem_type}: expected "
+                    f"{INSTANCES_PER_PROBLEM} embeddings, "
+                    f"got {len(problem_embeddings)}"
                 )
 
-            if embedding_dim != 128:
-                raise RuntimeError(
-                    f"Expected embedding dimension 128, "
-                    f"got {embedding_dim}"
-                )
+            all_embeddings.append(problem_embeddings)
 
-            # Mean pooling over ALL tokens,
-            # including the depot token.
-            embedding = encoder_output.mean(dim=1)
-
-            if embedding.shape != (
-                batch_size,
-                128
-            ):
-                raise RuntimeError(
-                    f"Unexpected pooled embedding shape: "
-                    f"{embedding.shape}"
-                )
-
-            embedding = (
-                embedding
-                .detach()
-                .cpu()
-                .numpy()
-                .astype(np.float32)
+            print(
+                f"  Finished {problem_type}: "
+                f"{problem_embeddings.shape}"
             )
-
-            all_embeddings.append(embedding)
-
-            global_count += batch_size
-
-            if (
-                batch_idx == 0
-                or (batch_idx + 1) % 10 == 0
-                or global_count == expected_total
-            ):
-                print(
-                    f"Batch {batch_idx + 1:4d} | "
-                    f"instances: "
-                    f"{global_count:5d}/{expected_total}"
-                )
-
+            print()
     # ========================================================
     # 7. Concatenate
     # ========================================================
