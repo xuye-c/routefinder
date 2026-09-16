@@ -185,7 +185,7 @@ def configure_teacher(teacher, teacher_pomo):
         param.requires_grad = False
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def teacher_tours_for_batch(teacher, env, td, args):
     td_t = env.reset(td=td.clone(recurse=True).to(args.device))
     with torch.amp.autocast(
@@ -194,12 +194,13 @@ def teacher_tours_for_batch(teacher, env, td, args):
         enabled=(args.device == "cuda"),
     ):
         out = teacher(td_t, env)
-    return pick_best_tours(out, td.batch_size[0])
+    # inference/no_grad tensors cannot be used as indices in autograd
+    return pick_best_tours(out, td.batch_size[0]).detach().clone()
 
 
 def nll_on_tours(student, env, td, tours, args):
     td_s = env.reset(td=td.clone(recurse=True).to(args.device))
-    tours = tours.to(args.device)
+    tours = tours.detach().to(device=args.device, dtype=torch.long).clone()
     lengths = torch.full(
         (tours.size(0),), tours.size(1), dtype=torch.long, device=args.device
     )
