@@ -7,8 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from search import _ls_instance_iterated
-from search.vrplib_helpers import vrplib_round_func_from_id
 from utils.functions import batchify, gather_by_index
 
 from models.decoder import VRP_Decoder
@@ -241,6 +239,10 @@ class VRPModel(nn.Module):
         gamma: int = 30,
         eta_min: float = 0.01,
     ):
+        # Local search needs pyvrp; keep the rest of the model importable without it.
+        from search import _ls_instance_iterated
+        from search.vrplib_helpers import vrplib_round_func_from_id
+
         args = self.args
         input_batch_size = td_orig.batch_size[0]
         num_augment = int(args.tester_params.get("num_augment", 1))
