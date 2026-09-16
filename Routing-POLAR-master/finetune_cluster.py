@@ -289,7 +289,14 @@ def stack_tds(pieces):
 
 
 def subset_td(td, indices):
-    indices = torch.as_tensor(indices, dtype=torch.long)
+    # torch.set_default_device(cuda) would otherwise put indices on GPU
+    # while loaded npz TensorDicts stay on CPU.
+    sample = next(v for v in td.values() if torch.is_tensor(v))
+    if torch.is_tensor(indices):
+        indices = indices.to(device="cpu", dtype=torch.long)
+    else:
+        indices = torch.as_tensor(indices, dtype=torch.long, device="cpu")
+    indices = indices.to(sample.device)
     return TensorDict(
         {k: td[k][indices] for k in td.keys() if torch.is_tensor(td[k])},
         batch_size=[int(indices.numel())],
@@ -368,7 +375,7 @@ def save_json(path, payload):
 def train_one_epoch(model, env, optimizer, scaler, td_train, args, epoch, use_scaler):
     model.train()
     n = td_train.batch_size[0]
-    perm = torch.randperm(n)
+    perm = torch.randperm(n, device="cpu")
     losses = []
     costs = []
     instances_seen = 0
