@@ -8,26 +8,20 @@
 #SBATCH --output=polar_cft_%j.out
 #SBATCH --error=polar_cft_%j.err
 #
-# One cluster per job. Submit with:
-#   N_SIZE=50 CLUSTER=0 sbatch run_polar_cluster_ft.slurm
-# or use submit_cluster_ft.sh
-#
-# Copy CSVs to the cluster first, e.g.:
-#   scp umap_cluster_polar_encf_50.csv umap_cluster_polar_encf_100.csv \
-#       xc224@dkucc-login-01:~/routefinder/
+# Knobs live in cluster_ft_hparams.sh (edit that file on the cluster).
+# Submit:
+#   bash submit_cluster_ft.sh 50
+#   N_SIZE=50 CLUSTER=0 sbatch --export=ALL,N_SIZE=50,CLUSTER=0 run_polar_cluster_ft.slurm
+# Override one knob without editing the file:
+#   LR=1e-5 FT_EPOCHS=2 sbatch --export=ALL,N_SIZE=50,CLUSTER=0,LR,FT_EPOCHS run_polar_cluster_ft.slurm
 
 source /opt/apps/centos8/anaconda3/etc/profile.d/conda.sh
 conda activate polar
 
 cd ~/routefinder/Routing-POLAR-master
 
-N_SIZE="${N_SIZE:-50}"
-CLUSTER="${CLUSTER:-0}"
-EPOCH="${EPOCH:-300}"
-HOLD_FRAC="${HOLD_FRAC:-0.2}"
-FT_EPOCHS="${FT_EPOCHS:-10}"
-SEED="${SEED:-7}"
-EVAL_ONLY="${EVAL_ONLY:-0}"
+# shellcheck source=cluster_ft_hparams.sh
+source ./cluster_ft_hparams.sh
 
 if [ "${N_SIZE}" = "50" ]; then
   PATH_ID="${PATH_ID:-n=50/2026-0728-0719}"
@@ -55,7 +49,7 @@ fi
 
 if [ -z "${CLUSTER_CSV}" ] || [ ! -f "${CLUSTER_CSV}" ]; then
   echo "ERROR: cluster csv not found (${CSV_NAME})"
-  echo "Copy it to ~/routefinder/ or pass CLUSTER_CSV=/path/to/${CSV_NAME}"
+  echo "Copy it to ~/routefinder/ or set CLUSTER_CSV in cluster_ft_hparams.sh"
   exit 1
 fi
 
@@ -65,9 +59,16 @@ echo "Job: ${SLURM_JOB_ID}"
 echo "Python: $(which python)"
 echo "Python version: $(python --version)"
 echo "Conda env: ${CONDA_DEFAULT_ENV}"
-echo "N_SIZE=${N_SIZE} CLUSTER=${CLUSTER} PATH_ID=${PATH_ID}"
+
+echo "===== Hparams ====="
+echo "N_SIZE=${N_SIZE} CLUSTER=${CLUSTER} PATH_ID=${PATH_ID} EPOCH=${EPOCH}"
 echo "CLUSTER_CSV=${CLUSTER_CSV}"
-echo "BATCH_SIZE=${BATCH_SIZE} FT_EPOCHS=${FT_EPOCHS} HOLD_FRAC=${HOLD_FRAC}"
+echo "DATA_DIR=${DATA_DIR}"
+echo "FT_EPOCHS=${FT_EPOCHS} HOLD_FRAC=${HOLD_FRAC} SEED=${SEED}"
+echo "BATCH_SIZE=${BATCH_SIZE} EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE}"
+echo "LR=${LR} WEIGHT_DECAY=${WEIGHT_DECAY} LR_GAMMA=${LR_GAMMA} LR_DECAY_EPOCH=${LR_DECAY_EPOCH} GRAD_CLIP=${GRAD_CLIP}"
+echo "LOSS=${LOSS} PO_ALPHA=${PO_ALPHA}"
+echo "EVAL_ONLY=${EVAL_ONLY} SKIP_ZERO_SHOT=${SKIP_ZERO_SHOT}"
 
 echo "===== GPU ====="
 nvidia-smi
@@ -99,14 +100,15 @@ echo "===== Data ====="
 python - <<PY
 import os
 n = int("${N_SIZE}")
+data_dir = "${DATA_DIR}"
 problems = [
     "cvrp","ovrp","vrpb","vrpl","vrptw","ovrptw","ovrpb","ovrpl",
     "ovrpbl","ovrpbtw","ovrpltw","ovrpbltw","vrpbl","vrpbtw","vrpltw","vrpbltw",
 ]
 missing = []
 for p in problems:
-    inst = f"data/{p}/test/{n}.npz"
-    sol = f"data/{p}/test/{n}_sol_pyvrp.npz"
+    inst = f"{data_dir}/{p}/test/{n}.npz"
+    sol = f"{data_dir}/{p}/test/{n}_sol_pyvrp.npz"
     if not os.path.isfile(inst):
         missing.append(inst)
     if not os.path.isfile(sol):
@@ -126,6 +128,9 @@ EXTRA_FLAGS=()
 if [ "${EVAL_ONLY}" = "1" ]; then
   EXTRA_FLAGS+=(--eval_only)
 fi
+if [ "${SKIP_ZERO_SHOT}" = "1" ]; then
+  EXTRA_FLAGS+=(--skip_zero_shot)
+fi
 
 echo "===== Start cluster fine-tune ====="
 python finetune_cluster.py \
@@ -134,10 +139,19 @@ python finetune_cluster.py \
     --cluster_csv "${CLUSTER_CSV}" \
     --epoch "${EPOCH}" \
     --path_id "${PATH_ID}" \
+    --data_dir "${DATA_DIR}" \
     --batch_size "${BATCH_SIZE}" \
+    --eval_batch_size "${EVAL_BATCH_SIZE}" \
     --epochs "${FT_EPOCHS}" \
     --holdout_frac "${HOLD_FRAC}" \
+    --lr "${LR}" \
+    --weight_decay "${WEIGHT_DECAY}" \
+    --lr_gamma "${LR_GAMMA}" \
+    --lr_decay_epoch "${LR_DECAY_EPOCH}" \
+    --grad_clip "${GRAD_CLIP}" \
     --seed "${SEED}" \
+    --loss "${LOSS}" \
+    --po_alpha "${PO_ALPHA}" \
     "${EXTRA_FLAGS[@]}"
 
 echo "===== Done ====="

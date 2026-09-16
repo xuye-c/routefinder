@@ -90,6 +90,19 @@ def parse_args():
     parser.add_argument("--holdout_frac", type=float, default=0.2)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-6)
+    parser.add_argument(
+        "--lr_gamma",
+        type=float,
+        default=0.1,
+        help="MultiStepLR decay factor",
+    )
+    parser.add_argument(
+        "--lr_decay_epoch",
+        type=int,
+        default=0,
+        help="Epoch to decay LR (1-based). 0 => epochs-2",
+    )
+    parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--loss", type=str, default="po", choices=["po", "rl"])
     parser.add_argument("--po_alpha", type=float, default=0.05)
@@ -404,7 +417,7 @@ def train_one_epoch(model, env, optimizer, scaler, td_train, args, epoch, use_sc
             score_mean = (-reward).max(dim=0).values.mean()
 
         (scaler.scale(loss) if use_scaler else loss).backward()
-        clip_grad_norms(optimizer.param_groups, 1.0)
+        clip_grad_norms(optimizer.param_groups, args.grad_clip)
         if use_scaler:
             scaler.step(optimizer)
             scaler.update()
@@ -534,8 +547,14 @@ def main():
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
     scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
+    decay_epoch = args.lr_decay_epoch if args.lr_decay_epoch > 0 else max(args.epochs - 2, 1)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=[max(args.epochs - 2, 1)], gamma=0.1
+        optimizer, milestones=[decay_epoch], gamma=args.lr_gamma
+    )
+    print(
+        f"optim lr={args.lr} wd={args.weight_decay} "
+        f"decay_epoch={decay_epoch} gamma={args.lr_gamma} "
+        f"grad_clip={args.grad_clip} loss={args.loss} po_alpha={args.po_alpha}"
     )
 
     for epoch in range(1, args.epochs + 1):

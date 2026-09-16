@@ -1,14 +1,13 @@
 #!/bin/bash
 # Submit one Slurm job per cluster.
-# Usage:
+# Edit knobs in cluster_ft_hparams.sh, then:
 #   bash submit_cluster_ft.sh           # n=50 (5 jobs) and n=100 (7 jobs)
 #   bash submit_cluster_ft.sh 50        # only n=50
 #   bash submit_cluster_ft.sh 100       # only n=100
-#   EVAL_ONLY=1 bash submit_cluster_ft.sh 50   # zero-shot holdout eval only
+#   EVAL_ONLY=1 bash submit_cluster_ft.sh 50
 #
-# Copy CSVs first:
-#   scp umap_cluster_polar_encf_50.csv umap_cluster_polar_encf_100.csv \
-#       xc224@dkucc-login-01:~/routefinder/
+# One-off override:
+#   LR=1e-5 FT_EPOCHS=2 bash submit_cluster_ft.sh 50
 
 set -euo pipefail
 
@@ -20,7 +19,7 @@ submit_one() {
   local n_size="$1"
   local cluster="$2"
   echo "Submitting n=${n_size} cluster=${cluster}"
-  N_SIZE="${n_size}" CLUSTER="${cluster}" sbatch --export=ALL,N_SIZE="${n_size}",CLUSTER="${cluster}" "${SLURM_FILE}"
+  sbatch --export=ALL,N_SIZE="${n_size}",CLUSTER="${cluster}" "${SLURM_FILE}"
 }
 
 if [ "${WHICH}" = "50" ] || [ "${WHICH}" = "all" ]; then
