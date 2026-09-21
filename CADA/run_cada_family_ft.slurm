@@ -8,20 +8,30 @@
 #SBATCH --output=cada_family_ft_%j.out
 #SBATCH --error=cada_family_ft_%j.err
 #
-# One job = all 6 family specialists, sequential. The .out file has every
-# family banner / epoch / holdout line. Checkpoints go under
-#   CADA/{n}/result/family-ft-n{n}-<stamp>/family{k}-<name>/
+# Slurm copies this file to /var/spool/... so $0 is NOT CADA/.
+# Always cd via SLURM_SUBMIT_DIR or ~/routefinder/CADA.
 #
-# Submit:
+# Submit from ~/routefinder/CADA:
+#   sbatch --export=ALL,N_SIZE=50 run_cada_family_ft.slurm
 #   bash submit_cada_family_ft.sh 50
-#   N_SIZE=100 sbatch --export=ALL,N_SIZE=100 run_cada_family_ft.slurm
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
 
 source /opt/apps/centos8/anaconda3/etc/profile.d/conda.sh
 
-CADA_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/cada_family_ft_hparams.sh" ]; then
+  CADA_DIR="${SLURM_SUBMIT_DIR}"
+elif [ -f "${HOME}/routefinder/CADA/cada_family_ft_hparams.sh" ]; then
+  CADA_DIR="${HOME}/routefinder/CADA"
+else
+  echo "ERROR: cannot find cada_family_ft_hparams.sh"
+  echo "SLURM_SUBMIT_DIR=${SLURM_SUBMIT_DIR:-unset}"
+  echo "tried \$HOME/routefinder/CADA"
+  exit 1
+fi
+
+cd "${CADA_DIR}"
 # shellcheck source=cada_family_ft_hparams.sh
 source "${CADA_DIR}/cada_family_ft_hparams.sh"
 
@@ -57,6 +67,7 @@ fi
 echo "===== Environment ====="
 echo "Host: $(hostname)"
 echo "Job: ${SLURM_JOB_ID:-local}"
+echo "CADA_DIR: ${CADA_DIR}"
 echo "CWD: $(pwd)"
 echo "Python: $(which python)"
 echo "Python version: $(python --version)"
@@ -148,24 +159,20 @@ from envs.env import MTVRPEnv
 print("CADA model/env import OK for n=", n)
 PY
 
-EXTRA_FLAGS=()
+EXTRA=()
 if [ "${EVAL_ONLY}" = "1" ]; then
-  EXTRA_FLAGS+=(--eval_only)
+  EXTRA+=(--eval_only)
 fi
 if [ "${SKIP_ZERO_SHOT}" = "1" ]; then
-  EXTRA_FLAGS+=(--skip_zero_shot)
+  EXTRA+=(--skip_zero_shot)
 fi
-
-CSV_FLAG=()
 if [ -n "${CLUSTER_CSV}" ] && [ -f "${CLUSTER_CSV}" ]; then
-  CSV_FLAG+=(--cluster_csv "${CLUSTER_CSV}")
+  EXTRA+=(--cluster_csv "${CLUSTER_CSV}")
 else
   echo "NOTE: cluster csv not found; using built-in 6-family type mapping"
 fi
-
-DATA_FLAG=()
 if [ -n "${DATA_DIR}" ]; then
-  DATA_FLAG+=(--data_dir "${DATA_DIR}")
+  EXTRA+=(--data_dir "${DATA_DIR}")
 fi
 
 echo "===== Start CADA family fine-tune (all clusters in this job) ====="
@@ -186,11 +193,9 @@ python -u finetune_cada_family.py \
     --seed "${SEED}" \
     --loss "${LOSS}" \
     --po_alpha "${PO_ALPHA}" \
-    "${CSV_FLAG[@]}" \
-    "${DATA_FLAG[@]}" \
-    "${EXTRA_FLAGS[@]}"
+    ${EXTRA[@]+"${EXTRA[@]}"}
 
 echo "===== Done ====="
-echo "Slurm stdout: cada_family_ft_${SLURM_JOB_ID:-local}.out"
+echo "Slurm stdout: ${CADA_DIR}/cada_family_ft_${SLURM_JOB_ID:-local}.out"
 echo "Also copied into CADA/${N_SIZE}/result/family-ft-n${N_SIZE}-*/run.log"
 echo "Per-family ckpts: CADA/${N_SIZE}/result/family-ft-n${N_SIZE}-*/family{0-5}-*/tuned-family*-*.pt"
