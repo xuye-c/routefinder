@@ -34,6 +34,8 @@ fi
 cd "${CADA_DIR}"
 # shellcheck source=cada_family_ft_hparams.sh
 source "${CADA_DIR}/cada_family_ft_hparams.sh"
+FOLDS="${FOLDS:-10}"
+SAVE_CKPTS="${SAVE_CKPTS:-0}"
 
 conda activate "${CONDA_ENV}"
 
@@ -77,7 +79,7 @@ echo "===== Hparams ====="
 echo "N_SIZE=${N_SIZE} CLUSTERS=${CLUSTERS} PATH_ID=${PATH_ID} EPOCH=${EPOCH}"
 echo "CLUSTER_CSV=${CLUSTER_CSV:-<type mapping if missing>}"
 echo "DATA_DIR=${DATA_DIR:-<auto>}"
-echo "FT_EPOCHS=${FT_EPOCHS} HOLD_FRAC=${HOLD_FRAC} SEED=${SEED}"
+echo "FOLDS=${FOLDS} FT_EPOCHS=${FT_EPOCHS} HOLD_FRAC=${HOLD_FRAC} SEED=${SEED} SAVE_CKPTS=${SAVE_CKPTS}"
 echo "BATCH_SIZE=${BATCH_SIZE} EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE}"
 echo "LR=${LR} WEIGHT_DECAY=${WEIGHT_DECAY} LR_GAMMA=${LR_GAMMA} LR_DECAY_EPOCH=${LR_DECAY_EPOCH} GRAD_CLIP=${GRAD_CLIP}"
 echo "LOSS=${LOSS} PO_ALPHA=${PO_ALPHA}"
@@ -174,6 +176,9 @@ fi
 if [ -n "${DATA_DIR}" ]; then
   EXTRA+=(--data_dir "${DATA_DIR}")
 fi
+if [ "${SAVE_CKPTS}" = "1" ]; then
+  EXTRA+=(--save_ckpts)
+fi
 
 echo "===== Start CADA family fine-tune (all clusters in this job) ====="
 python -u finetune_cada_family.py \
@@ -184,6 +189,7 @@ python -u finetune_cada_family.py \
     --batch_size "${BATCH_SIZE}" \
     --eval_batch_size "${EVAL_BATCH_SIZE}" \
     --epochs "${FT_EPOCHS}" \
+    --folds "${FOLDS}" \
     --holdout_frac "${HOLD_FRAC}" \
     --lr "${LR}" \
     --weight_decay "${WEIGHT_DECAY}" \

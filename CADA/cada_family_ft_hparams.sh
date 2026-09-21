@@ -14,8 +14,10 @@ DATA_DIR="${DATA_DIR:-}"               # empty => routefinder/data or Routing-PO
 CONDA_ENV="${CONDA_ENV:-polar}"
 
 # ---- split / train loop ----
-FT_EPOCHS="${FT_EPOCHS:-5}"
-HOLD_FRAC="${HOLD_FRAC:-0.2}"
+FOLDS="${FOLDS:-10}"                  # 10-fold OOF; every instance predicted once
+FT_EPOCHS="${FT_EPOCHS:-5}"           # keep 5 to also pick best OOF epoch; use 1 to pin e1
+HOLD_FRAC="${HOLD_FRAC:-0.2}"         # only used if FOLDS=1
+SAVE_CKPTS="${SAVE_CKPTS:-0}"         # 1 = save a .pt per fold (very large)
 SEED="${SEED:-7}"
 BATCH_SIZE="${BATCH_SIZE:-}"           # empty => 128 if n=50 else 64
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-100}"

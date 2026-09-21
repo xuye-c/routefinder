@@ -16,10 +16,10 @@ on PYTHONPATH via this script). Example:
     python -u finetune_cada_family.py --n_size 50
     python -u finetune_cada_family.py --n_size 100 --clusters 0,1,2,3,4,5
 
-Each family reloads the same pretrained checkpoint, trains on that
-family's instances (stratified holdout), writes checkpoints + metrics
-under CADA/{n}/result/family-ft-..., and prints a banner so one Slurm
-.out shows all six runs.
+Each family reloads the pretrained checkpoint and runs stratified
+K-fold OOF (default 10): train on 9 folds, eval on the held-out fold,
+concatenate so every instance has one cost. That concatenated table is
+the family average cost (epoch-1 and best-epoch both written).
 """
 
 from __future__ import annotations
@@ -130,6 +130,17 @@ def parse_args():
     p.add_argument("--eval_batch_size", type=int, default=100)
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--holdout_frac", type=float, default=0.2)
+    p.add_argument(
+        "--folds",
+        type=int,
+        default=10,
+        help="Stratified K-fold OOF (default 10). Use 1 for the old holdout_frac split.",
+    )
+    p.add_argument(
+        "--save_ckpts",
+        action="store_true",
+        help="Save a .pt per fold/epoch (10-fold x 5 epochs x 6 families is large)",
+    )
     p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--weight_decay", type=float, default=1e-6)
     p.add_argument("--lr_gamma", type=float, default=0.1)
@@ -287,6 +298,53 @@ def stratified_split(rows, holdout_frac, seed):
     if not train_idx:
         raise ValueError("Train split is empty; lower --holdout_frac")
     return train_idx, hold_idx
+
+
+def stratified_kfold(rows, n_folds, seed):
+    """Type-stratified K-fold. Each instance appears in exactly one val fold."""
+    if n_folds < 2:
+        raise ValueError("n_folds must be >= 2")
+    by_type = defaultdict(list)
+    for i, row in enumerate(rows):
+        by_type[row["type"]].append(i)
+    rng = random.Random(seed)
+    fold_of = [0] * len(rows)
+    for indices in by_type.values():
+        rng.shuffle(indices)
+        for j, idx in enumerate(indices):
+            fold_of[idx] = j % n_folds
+    folds = []
+    for k in range(n_folds):
+        val_idx = [i for i, f in enumerate(fold_of) if f == k]
+        train_idx = [i for i, f in enumerate(fold_of) if f != k]
+        if not val_idx or not train_idx:
+            raise ValueError(f"fold {k} is empty; lower --folds")
+        folds.append((train_idx, val_idx))
+    return folds
+
+
+def oof_metrics(rows):
+    if not rows:
+        return {"n": 0, "no_aug_cost": None, "aug_cost": None, "no_aug_gap": None, "aug_gap": None}
+    cost = np.array([float(r["cost"]) for r in rows], dtype=np.float64)
+    aug = np.array([float(r["aug_cost"]) for r in rows], dtype=np.float64)
+    out = {
+        "n": int(len(rows)),
+        "no_aug_cost": float(cost.mean()),
+        "aug_cost": float(aug.mean()),
+        "no_aug_gap": None,
+        "aug_gap": None,
+    }
+    if all(r.get("opt_cost") not in (None, "") for r in rows):
+        opt = np.abs(np.array([float(r["opt_cost"]) for r in rows], dtype=np.float64))
+        scale = 1000.0
+        def gap(x):
+            agree = np.round(x * scale) == np.round(opt * scale)
+            g = (x - opt) * 100.0 / np.maximum(opt, 1e-30)
+            return float(np.where(agree, 0.0, g).mean())
+        out["no_aug_gap"] = gap(np.abs(cost))
+        out["aug_gap"] = gap(np.abs(aug))
+    return out
 
 
 def select_keys(td):
@@ -493,31 +551,41 @@ def train_one_epoch(model, env, optimizer, td_train, device, args, epoch, clip_g
     return float(np.mean(losses)), float(np.mean(costs))
 
 
-def load_pretrained(model, ckpt_path, device):
+def load_pretrained(model, ckpt_path, device, quiet=False):
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     state = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
     if any(k.startswith("module.") for k in state):
         state = {k.replace("module.", "", 1): v for k, v in state.items()}
     model.load_state_dict(state, strict=True)
     del ckpt
-    log(f"Loaded pretrained weights from {ckpt_path}")
+    if not quiet:
+        log(f"Loaded pretrained weights from {ckpt_path}")
+
+
+def _splits(rows, args):
+    n_folds = int(getattr(args, "folds", 10))
+    if n_folds <= 1:
+        train_idx, hold_idx = stratified_split(rows, args.holdout_frac, args.seed)
+        return [(train_idx, hold_idx)]
+    return stratified_kfold(rows, n_folds, args.seed)
 
 
 def run_one_family(cluster, args, shared):
     name = FAMILY_NAME[cluster]
     fam_dir = os.path.join(args.result_root, f"family{cluster}-{name}")
     os.makedirs(fam_dir, exist_ok=True)
+    n_folds = int(getattr(args, "folds", 10))
 
     log("")
     log("=" * 78)
-    log(f"FAMILY {cluster}/5  {name}")
+    log(f"FAMILY {cluster}/5  {name}  folds={n_folds}")
     log("=" * 78)
 
     rows = load_cluster_rows(args.cluster_csv, args.n_size, cluster)
-    train_idx, hold_idx = stratified_split(rows, args.holdout_frac, args.seed)
+    splits = _splits(rows, args)
     log(
         f"cluster size={len(rows)} types={sorted({r['type'] for r in rows})} "
-        f"train={len(train_idx)} holdout={len(hold_idx)}"
+        f"folds={len(splits)} val/fold={len(splits[0][1])}"
     )
 
     env = shared["env_cls"](**args.env)
@@ -528,10 +596,7 @@ def run_one_family(cluster, args, shared):
         shared["fill_missing_vrp_fields"],
         shared["load_npz_to_tensordict"],
     )
-    td_train = subset_td(td_all, train_idx)
-    td_hold = subset_td(td_all, hold_idx)
-    hold_ids = [rows[i]["problem_id"] for i in hold_idx]
-
+    all_ids = [r["problem_id"] for r in rows]
     save_json(
         os.path.join(fam_dir, "split.json"),
         {
@@ -539,20 +604,23 @@ def run_one_family(cluster, args, shared):
             "cluster": cluster,
             "family": name,
             "csv": str(args.cluster_csv) if args.cluster_csv else None,
-            "holdout_frac": args.holdout_frac,
+            "folds": n_folds,
+            "holdout_frac": args.holdout_frac if n_folds <= 1 else None,
             "seed": args.seed,
             "types": sorted({r["type"] for r in rows}),
-            "train_ids": [rows[i]["problem_id"] for i in train_idx],
-            "holdout_ids": hold_ids,
+            "fold_val_ids": [
+                [rows[i]["problem_id"] for i in val_idx] for _, val_idx in splits
+            ],
         },
     )
 
     model = shared["model_cls"](args).to(args.device)
-    load_pretrained(model, args.ckpt_path, args.device)
     augmentation = shared["aug_cls"]()
+    decay_epoch = args.lr_decay_epoch if args.lr_decay_epoch > 0 else max(args.epochs - 2, 1)
+    oof_by_epoch = defaultdict(list)
     history = []
 
-    def run_eval(tag, epoch):
+    def eval_split(td_hold, hold_ids, tag, epoch, fold):
         metrics, per_row = evaluate(
             model,
             env,
@@ -562,65 +630,130 @@ def run_one_family(cluster, args, shared):
             args.eval_batch_size,
             problem_ids=hold_ids,
         )
-        log_metrics(f"[{tag} epoch {epoch} holdout family{cluster} {name}]", metrics)
-        record = {"tag": tag, "epoch": epoch, "cluster": cluster, "family": name, **metrics}
+        for rec in per_row:
+            rec["fold"] = fold
+            rec["epoch"] = epoch
+            rec["tag"] = tag
+            rec["cluster"] = cluster
+            rec["family"] = name
+            rec["type"] = rec["problem_id"].rsplit(f"_{args.n_size}_", 1)[0]
+        log_metrics(
+            f"[{tag} epoch {epoch} fold {fold}/{len(splits)-1} family{cluster} {name}]",
+            metrics,
+        )
+        record = {
+            "tag": tag,
+            "epoch": epoch,
+            "fold": fold,
+            "cluster": cluster,
+            "family": name,
+            **metrics,
+        }
         history.append(record)
         save_json(os.path.join(fam_dir, "metrics.json"), history)
-        write_csv(os.path.join(fam_dir, f"holdout_{tag}_e{epoch}.csv"), per_row)
-        return metrics
+        return metrics, per_row
 
     if not args.skip_zero_shot:
-        run_eval("zero_shot", 0)
+        load_pretrained(model, args.ckpt_path, args.device)
+        zs_metrics, zs_rows = evaluate(
+            model,
+            env,
+            td_all,
+            args.device,
+            augmentation,
+            args.eval_batch_size,
+            problem_ids=all_ids,
+        )
+        for rec in zs_rows:
+            rec["fold"] = -1
+            rec["epoch"] = 0
+            rec["tag"] = "zero_shot"
+            rec["cluster"] = cluster
+            rec["family"] = name
+            rec["type"] = rec["problem_id"].rsplit(f"_{args.n_size}_", 1)[0]
+        oof_by_epoch[0] = zs_rows
+        write_csv(os.path.join(fam_dir, "oof_e0_zeroshot.csv"), zs_rows)
+        log_metrics(f"[zero_shot full family{cluster} {name}]", zs_metrics)
+        history.append({"tag": "zero_shot", "epoch": 0, "fold": -1, "cluster": cluster, "family": name, **zs_metrics})
+        save_json(os.path.join(fam_dir, "metrics.json"), history)
 
     if args.eval_only:
         log(f"eval_only: family {cluster} done")
-        return history[-1] if history else {}
+        return {"zero_shot": oof_metrics(oof_by_epoch.get(0, [])), "oof_epoch1": {}, "oof_best": {}}
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
-    )
-    decay_epoch = args.lr_decay_epoch if args.lr_decay_epoch > 0 else max(args.epochs - 2, 1)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=[decay_epoch], gamma=args.lr_gamma
-    )
     log(
         f"optim lr={args.lr} wd={args.weight_decay} "
         f"decay_epoch={decay_epoch} gamma={args.lr_gamma} "
-        f"grad_clip={args.grad_clip} loss={args.loss} po_alpha={args.po_alpha}"
+        f"grad_clip={args.grad_clip} loss={args.loss} po_alpha={args.po_alpha} "
+        f"save_ckpts={bool(getattr(args, 'save_ckpts', False))}"
     )
 
-    last = None
-    for epoch in range(1, args.epochs + 1):
-        train_one_epoch(
-            model,
-            env,
-            optimizer,
-            td_train,
-            args.device,
-            args,
-            epoch,
-            shared["clip_grad_norms"],
+    for fold, (train_idx, val_idx) in enumerate(splits):
+        td_train = subset_td(td_all, train_idx)
+        td_hold = subset_td(td_all, val_idx)
+        hold_ids = [rows[i]["problem_id"] for i in val_idx]
+        log(f"----- family{cluster} {name} fold {fold}/{len(splits)-1} train={len(train_idx)} val={len(val_idx)} -----")
+        load_pretrained(model, args.ckpt_path, args.device, quiet=(fold > 0))
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.lr, weight_decay=args.weight_decay
         )
-        scheduler.step()
-        last = run_eval("finetune", epoch)
-        ckpt_out = os.path.join(fam_dir, f"tuned-family{cluster}-{epoch}.pt")
-        torch.save(
-            {
-                "epoch": epoch,
-                "cluster": cluster,
-                "family": name,
-                "n_size": args.n_size,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "holdout_metrics": last,
-            },
-            ckpt_out,
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[decay_epoch], gamma=args.lr_gamma
         )
-        log(f"saved {ckpt_out}")
+        for epoch in range(1, args.epochs + 1):
+            train_one_epoch(
+                model,
+                env,
+                optimizer,
+                td_train,
+                args.device,
+                args,
+                epoch,
+                shared["clip_grad_norms"],
+            )
+            scheduler.step()
+            _, per_row = eval_split(td_hold, hold_ids, "finetune", epoch, fold)
+            oof_by_epoch[epoch].extend(per_row)
+            if getattr(args, "save_ckpts", False):
+                ckpt_out = os.path.join(fam_dir, f"tuned-family{cluster}-fold{fold}-e{epoch}.pt")
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "fold": fold,
+                        "cluster": cluster,
+                        "family": name,
+                        "n_size": args.n_size,
+                        "model_state_dict": model.state_dict(),
+                    },
+                    ckpt_out,
+                )
+                log(f"saved {ckpt_out}")
+        if args.device == "cuda":
+            torch.cuda.empty_cache()
 
+    oof_summary = []
+    for epoch in sorted(oof_by_epoch):
+        recs = oof_by_epoch[epoch]
+        write_csv(os.path.join(fam_dir, f"oof_e{epoch}.csv"), recs)
+        met = oof_metrics(recs)
+        met.update({"epoch": epoch, "cluster": cluster, "family": name, "tag": "zero_shot" if epoch == 0 else "oof"})
+        oof_summary.append(met)
+        log_metrics(f"[OOF epoch {epoch} family{cluster} {name}]", met)
+
+    write_csv(os.path.join(fam_dir, "oof_summary.csv"), oof_summary)
+    best = min(oof_summary, key=lambda r: (r["aug_gap"] is None, r["aug_gap"])) if oof_summary else {}
+    e1 = next((r for r in oof_summary if int(r["epoch"]) == 1), {})
+    zs = next((r for r in oof_summary if int(r["epoch"]) == 0), {})
+    if best:
+        write_csv(os.path.join(fam_dir, "oof_best.csv"), oof_by_epoch[int(best["epoch"])])
     log(f"Fine-tuning complete for family {cluster} {name}")
+    log(
+        f"OOF e1 aug_cost={e1.get('aug_cost')} aug_gap={e1.get('aug_gap')} | "
+        f"best e{best.get('epoch')} aug_gap={best.get('aug_gap')} | "
+        f"zs aug_gap={zs.get('aug_gap')}"
+    )
     log(f"Artifacts in {fam_dir}")
-    return last or {}
+    return {"zero_shot": zs, "oof_epoch1": e1, "oof_best": best}
 
 
 def main():
@@ -689,10 +822,11 @@ def main():
         )
 
     stamp = time.strftime("%Y-%m%d-%H%M", time.localtime())
+    nfold_tag = f"{args.folds}fold-" if int(args.folds) > 1 else ""
     if args.result_root:
         args.result_root = os.path.abspath(os.path.expanduser(args.result_root))
     else:
-        args.result_root = str(size_dir / "result" / f"family-ft-n{args.n_size}-{stamp}")
+        args.result_root = str(size_dir / "result" / f"family-ft-n{args.n_size}-{nfold_tag}{stamp}")
     os.makedirs(args.result_root, exist_ok=True)
     log_path = os.path.join(args.result_root, "run.log")
 
@@ -715,7 +849,7 @@ def main():
     sys.stderr = _Tee(sys.stderr, log_path)
 
     log("=" * 78)
-    log("CADA family fine-tune (6 specialists)")
+    log("CADA family fine-tune (6 specialists, stratified K-fold OOF)")
     log(f"n_size      : {args.n_size}")
     log(f"clusters    : {clusters} -> {[FAMILY_NAME[c] for c in clusters]}")
     log(f"csv         : {args.cluster_csv or '(type mapping, no csv)'}")
@@ -724,8 +858,8 @@ def main():
     log(f"result_root : {args.result_root}")
     log(f"run.log     : {log_path}")
     log(
-        f"epochs={args.epochs} lr={args.lr} batch={args.batch_size} "
-        f"holdout={args.holdout_frac} loss={args.loss} seed={args.seed}"
+        f"folds={args.folds} epochs={args.epochs} lr={args.lr} batch={args.batch_size} "
+        f"loss={args.loss} seed={args.seed} save_ckpts={args.save_ckpts}"
     )
     log("=" * 78)
 
@@ -739,32 +873,66 @@ def main():
     }
 
     summary = []
+    oof_e1_all = []
+    oof_best_all = []
+    zs_all = []
     for cluster in clusters:
-        last = run_one_family(cluster, args, shared)
+        out = run_one_family(cluster, args, shared)
+        e1 = out.get("oof_epoch1") or {}
+        best = out.get("oof_best") or {}
+        zs = out.get("zero_shot") or {}
         summary.append(
             {
                 "cluster": cluster,
                 "family": FAMILY_NAME[cluster],
-                **{k: last.get(k) for k in ("n", "no_aug_cost", "aug_cost", "no_aug_gap", "aug_gap")},
+                "n": e1.get("n") or zs.get("n"),
+                "zs_aug_cost": zs.get("aug_cost"),
+                "zs_aug_gap": zs.get("aug_gap"),
+                "e1_aug_cost": e1.get("aug_cost"),
+                "e1_aug_gap": e1.get("aug_gap"),
+                "best_epoch": best.get("epoch"),
+                "best_aug_cost": best.get("aug_cost"),
+                "best_aug_gap": best.get("aug_gap"),
             }
         )
+        fam = Path(args.result_root) / f"family{cluster}-{FAMILY_NAME[cluster]}"
+        for fname, bucket in (
+            ("oof_e1.csv", oof_e1_all),
+            ("oof_best.csv", oof_best_all),
+            ("oof_e0_zeroshot.csv", zs_all),
+        ):
+            p = fam / fname
+            if not p.is_file() and fname == "oof_e1.csv":
+                p = fam / "oof_e1.csv"
+            if p.is_file():
+                with p.open() as f:
+                    bucket.extend(csv.DictReader(f))
         if args.device == "cuda":
             torch.cuda.empty_cache()
 
     log("")
     log("=" * 78)
-    log("SUMMARY (last holdout eval per family)")
+    log("SUMMARY  OOF average cost (every instance predicted once)")
     log("=" * 78)
     for row in summary:
-        gap = row.get("aug_gap")
-        gap_s = f"{gap:.3f}%" if isinstance(gap, float) else "NA"
         log(
-            f"  family{row['cluster']} {row['family']:22s} "
-            f"n={row.get('n')} aug_cost={row.get('aug_cost')} aug_gap={gap_s}"
+            f"  family{row['cluster']} {row['family']:22s} n={row.get('n')}  "
+            f"zs_aug={row.get('zs_aug_cost')} gap={row.get('zs_aug_gap')} | "
+            f"e1_aug={row.get('e1_aug_cost')} gap={row.get('e1_aug_gap')} | "
+            f"best e{row.get('best_epoch')} aug={row.get('best_aug_cost')} gap={row.get('best_aug_gap')}"
         )
     save_json(os.path.join(args.result_root, "summary.json"), summary)
     write_csv(os.path.join(args.result_root, "summary.csv"), summary)
-    log(f"Wrote {args.result_root}/summary.json and summary.csv")
+    if oof_e1_all:
+        write_csv(os.path.join(args.result_root, "oof_epoch1_all.csv"), oof_e1_all)
+        log_metrics("[OOF epoch1 ALL families]", oof_metrics(oof_e1_all))
+    if oof_best_all:
+        write_csv(os.path.join(args.result_root, "oof_best_all.csv"), oof_best_all)
+        log_metrics("[OOF best-epoch ALL families]", oof_metrics(oof_best_all))
+    if zs_all:
+        write_csv(os.path.join(args.result_root, "oof_zeroshot_all.csv"), zs_all)
+        log_metrics("[zero-shot ALL families]", oof_metrics(zs_all))
+    log(f"Wrote {args.result_root}/summary.csv and oof_*_all.csv")
     log("All families done")
 
 
