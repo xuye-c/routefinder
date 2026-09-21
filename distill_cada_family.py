@@ -180,7 +180,7 @@ def teacher_tours_batch(model, env, td_in, device, max_starts):
 
 
 def nll_on_tours(model, env, td_in, tours, device):
-    from utils.functions import gather_by_index
+    from utils.functions import batchify, gather_by_index
 
     p_s_tag = td_in["p_s_tag"].clone()
     td = env.reset(td=td_in.clone(recurse=True).to(device))
@@ -189,10 +189,14 @@ def nll_on_tours(model, env, td_in, tours, device):
     batch = td.batch_size[0]
     prompt = model.prompt_net(td)["prompt"]
     node_embed = model.encoder(td, prompt)
-    num_starts = 1
-    action = tours[:, 0]
-    nll = torch.zeros(batch, device=device)
-    td.set("action", action)
+    # CADA decoder gather_by_index squeezes when the start dim is 1, then
+    # torch.cat(cur_node_embedding, state_embedding) is 2D vs 3D. Keep two
+    # identical starts so the start dim stays, matching POMO training.
+    num_starts = 2
+    tours = tours.repeat(num_starts, 1)
+    td = batchify(td, num_starts)
+    nll = torch.zeros(batch * num_starts, device=device)
+    td.set("action", tours[:, 0])
     td = env.step(td)["next"]
     cache = _cache_from_embed(model, node_embed)
     step = 1
@@ -200,12 +204,13 @@ def nll_on_tours(model, env, td_in, tours, device):
         logprobs, mask = model.decoder(td, cache, num_starts)
         select = tours[:, step]
         token = gather_by_index(logprobs, select, dim=1)
-        active = (~td["done"]).reshape(batch).float()
+        active = (~td["done"]).reshape(batch * num_starts).float()
         nll = nll - token * active
         td.set("action", select)
         td = env.step(td)["next"]
         step += 1
-    reward = env.get_reward(td, tours[:, :step])
+    reward = env.get_reward(td, tours[:, :step]).view(num_starts, batch)[0]
+    nll = nll.view(num_starts, batch)[0]
     return nll.mean(), (-reward).mean()
 
 
