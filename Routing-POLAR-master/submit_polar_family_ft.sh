@@ -1,7 +1,7 @@
 #!/bin/bash
 #   bash submit_polar_family_ft.sh 50
-#   TRAIN_MODULES=prompt_film bash submit_polar_family_ft.sh 50
-#   FAMILIES=1 bash submit_polar_family_ft.sh 50   # one family smoke test
+#   FAMILIES=1 bash submit_polar_family_ft.sh 50
+#   CLUSTER_CSV=$HOME/constraint_family_cluster_6way_50.csv FAMILIES=1 bash submit_polar_family_ft.sh 50
 
 set -euo pipefail
 

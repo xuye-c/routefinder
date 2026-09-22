@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Specialize Polar into 6 constraint-family Prompt/FiLM heads.
+"""Specialize Polar into 6 constraint-family heads.
 
-Does NOT use official --tune (that is unseen mb/md, 10k generated, full-net 3e-4).
+Does NOT use official --tune (unseen mb/md, full-net 3e-4).
 
-Train: online generator, only this family's 2–4 variants. Freeze encoder/decoder
-except PromptNet + FiLM. Never trains on the labeled test npz.
+Train: generated instances of this family's types. Freeze encoder. Train
+PromptNet + decoder. Optional training-time PyVRP LS (same as pretrain
+epoch 250+): improves PO targets only. Does not run at eval.
 
-Eval: all labeled test instances of that family (no leakage). Report aug_gap.
-
-Run from Routing-POLAR-master/:
-
-    python -u finetune_polar_family.py --n_size 50
+Eval: labeled test, greedy + 8-aug, no refinement (same solve time as Polar).
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import multiprocessing as mp
 import os
 import random
 import time
@@ -27,6 +26,7 @@ import finetune_cluster as fc
 from envs.mtvrp.env import MTVRPEnv
 from envs.transformer import StateAugmentation
 from models.model import VRPModel
+from search import POLAR_SCALER, Search
 from utils.functions import clip_grad_norms
 
 FAMILY_NAME = {
@@ -60,7 +60,7 @@ def parse_args():
     p.add_argument("--eval_batch_size", type=int, default=100)
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--episodes", type=int, default=4096, help="Generated instances per epoch")
-    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--weight_decay", type=float, default=1e-6)
     p.add_argument("--grad_clip", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=7)
@@ -75,10 +75,19 @@ def parse_args():
     p.add_argument(
         "--train_modules",
         type=str,
-        default="prompt",
-        choices=["prompt", "prompt_film", "all"],
-        help="prompt = PromptNet; prompt_film = PromptNet+FiLM; all = full net (not recommended)",
+        default="prompt_decoder",
+        choices=["prompt", "prompt_film", "prompt_decoder", "decoder", "all"],
+        help="Freeze encoder by default; prompt_decoder trains PromptNet+decoder",
     )
+    p.add_argument(
+        "--use_ls",
+        dest="use_ls",
+        action="store_true",
+        default=True,
+        help="Training-time PyVRP LS on PO targets (default on). Eval never uses LS.",
+    )
+    p.add_argument("--no_use_ls", dest="use_ls", action="store_false")
+    p.add_argument("--ls_nb_granular", type=int, default=20)
     p.add_argument("--eval_only", action="store_true")
     p.add_argument("--skip_zero_shot", action="store_true")
     p.add_argument("--result_root", type=str, default=None)
@@ -142,8 +151,16 @@ def freeze_except(model, mode: str):
         print(f"Train ALL params={trained}")
         return
     for name, param in model.named_parameters():
-        keep = name.startswith("prompt_net.")
-        if mode == "prompt_film" and "film_generator" in name:
+        keep = False
+        if name.startswith("prompt_net.") and mode in (
+            "prompt",
+            "prompt_film",
+            "prompt_decoder",
+        ):
+            keep = True
+        if "film_generator" in name and mode == "prompt_film":
+            keep = True
+        if name.startswith("decoder.") and mode in ("decoder", "prompt_decoder"):
             keep = True
         if keep:
             param.requires_grad = True
@@ -152,6 +169,164 @@ def freeze_except(model, mode: str):
     print(f"Train {mode}: trainable={trained} frozen={frozen}")
     if trained == 0:
         raise RuntimeError(f"no params matched train_modules={mode}")
+
+
+def _ls_worker(batch_idx, instance_args, pomo_indices, tours, nb_granular=20):
+    (
+        locs,
+        demands_linehaul,
+        demands_backhaul,
+        distance_limit,
+        open_route,
+        time_windows,
+        service_time,
+        num_depots,
+        mixed_backhaul,
+    ) = instance_args
+    search = Search(
+        locs,
+        demands_linehaul,
+        demands_backhaul,
+        distance_limit,
+        open_route,
+        time_windows,
+        service_time,
+        num_depots,
+        mixed_backhaul,
+        nb_granular=nb_granular,
+        scaler=POLAR_SCALER,
+    )
+    improvements = []
+    for pomo_idx, tour in zip(pomo_indices, tours):
+        seed = (batch_idx * 100003 + pomo_idx * 1000003) & 0xFFFFFFFF
+        cost, improved_tour = search.build_solution(tour, seed=seed)
+        improvements.append(
+            {
+                "batch_idx": batch_idx,
+                "pomo_idx": pomo_idx,
+                "tour": improved_tour,
+                "cost": cost,
+            }
+        )
+    return improvements
+
+
+class TrainLS:
+    """Training-time PyVRP LS. Never used at eval."""
+
+    def __init__(self, nb_granular=20):
+        workers = min(8, os.cpu_count() or 1)
+        self.nb_granular = nb_granular
+        self.executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=workers, mp_context=mp.get_context("spawn")
+        )
+        print(f"Train LS pool workers={workers} granular={nb_granular}")
+
+    def close(self):
+        if self.executor is not None:
+            self.executor.shutdown(wait=True)
+            self.executor = None
+
+    def run(self, td, reward, tours):
+        batch_size = reward.size(1)
+        locs = td["locs"].detach().cpu().numpy()
+        demands_linehaul = td["demand_linehaul"].detach().cpu().numpy()
+        demands_backhaul = td["demand_backhaul"].detach().cpu().numpy()
+        distance_limit = td["distance_limit"].detach().cpu().numpy()
+        open_route = td["open_route"].detach().cpu().numpy()
+        time_windows = td["time_windows"].detach().cpu().numpy()
+        service_time = td["service_time"].detach().cpu().numpy()
+        mixed = (
+            td["p_s_tag"].detach().cpu().numpy()[:, 5]
+            if "p_s_tag" in td.keys()
+            else np.zeros(batch_size)
+        )
+        reward_np = reward.detach().cpu()
+        tours_np = tours.detach().cpu().numpy()
+        jobs = []
+        for bidx in range(batch_size):
+            pomo_idx = int(torch.topk(reward_np[:, bidx], k=1, largest=True).indices[0])
+            jobs.append(
+                {
+                    "batch_idx": bidx,
+                    "args": (
+                        locs[bidx],
+                        demands_linehaul[bidx],
+                        demands_backhaul[bidx],
+                        distance_limit[bidx],
+                        open_route[bidx],
+                        time_windows[bidx],
+                        service_time[bidx],
+                        1,
+                        bool(mixed[bidx]),
+                    ),
+                    "pomo_indices": [pomo_idx],
+                    "tours": [tours_np[pomo_idx, bidx]],
+                }
+            )
+        futs = [
+            self.executor.submit(
+                _ls_worker,
+                job["batch_idx"],
+                job["args"],
+                job["pomo_indices"],
+                job["tours"],
+                self.nb_granular,
+            )
+            for job in jobs
+        ]
+        out = []
+        for fut in concurrent.futures.as_completed(futs):
+            out.extend(fut.result())
+        return out
+
+
+def apply_ls_improvements(model, env, td_init, reward, log_likelihood, improvements):
+    if not improvements:
+        return reward, log_likelihood, 0
+    reward = reward.clone()
+    log_likelihood = log_likelihood.clone()
+    device = reward.device
+    unique = []
+    seen = set()
+    for imp in improvements:
+        bidx = imp["batch_idx"]
+        if bidx not in seen:
+            seen.add(bidx)
+            unique.append(bidx)
+    batch_indices = torch.tensor(unique, device=device)
+    bidx_to_local = {b: i for i, b in enumerate(unique)}
+    lengths = torch.tensor([len(imp["tour"]) for imp in improvements], device=device)
+    max_len = int(lengths.max().item())
+    tours_tensor = torch.zeros((len(improvements), max_len), dtype=torch.long, device=device)
+    for i, imp in enumerate(improvements):
+        seq = torch.tensor(imp["tour"], dtype=torch.long, device=device)
+        tours_tensor[i, : seq.size(0)] = seq
+    local_idx = torch.tensor(
+        [bidx_to_local[imp["batch_idx"]] for imp in improvements], device=device
+    )
+    td_unique = td_init[batch_indices].clone(recurse=True)
+    td_flat = td_unique[local_idx].clone(recurse=True)
+    node_embed = model.encoded_nodes[batch_indices][local_idx]
+    node_coords = model.encoded_coords[batch_indices][local_idx]
+    ls_out = model.route_forward(
+        td_flat,
+        env,
+        tours_tensor,
+        lengths,
+        num_starts=1,
+        node_embed=node_embed,
+        node_coords=node_coords,
+    )
+    replaced = 0
+    for i, imp in enumerate(improvements):
+        bidx = imp["batch_idx"]
+        pomo_idx = imp["pomo_idx"]
+        if float(ls_out["reward"][i]) > float(reward[pomo_idx, bidx]):
+            reward[pomo_idx, bidx] = ls_out["reward"][i]
+            log_likelihood[pomo_idx, bidx] = ls_out["log_likelihood"].sum(1)[i]
+            replaced += 1
+    return reward, log_likelihood, replaced
 
 
 def load_family_eval_td(env, csv_path, n_size, cluster):
@@ -184,7 +359,8 @@ def main():
     args.env["generator_params"]["num_loc"] = args.n_size
     args.env["generator_params"]["variant_preset"] = FAMILY_TYPES[families[0]][0]
     args.trainer_params["po_B"] = None if args.train_pomo <= 0 else int(args.train_pomo)
-    args.trainer_params["use_ls"] = False
+    args.trainer_params["use_ls"] = bool(args.use_ls)
+    args.trainer_params["ls_nb_granular"] = int(args.ls_nb_granular)
 
     fc.setup_device(args)
     fc.seed_all(args.seed, args.device)
@@ -221,12 +397,13 @@ def main():
     os.makedirs(result_root, exist_ok=True)
 
     print("=" * 72)
-    print("POLAR family specialization (generated data, Prompt/FiLM, not --tune)")
+    print("POLAR family FT (generated data; train LS; eval greedy+8aug, no refinement)")
     print(f"ckpt         : {ckpt_path}")
     print(f"csv          : {csv_path}")
     print(f"families     : {families}")
     print(f"train_modules: {args.train_modules} lr={args.lr} epochs={args.epochs}")
     print(f"episodes/ep  : {args.episodes} batch={args.batch_size} train_pomo={args.train_pomo}")
+    print(f"use_ls(train): {args.use_ls}  eval_refinement: False")
     print(f"result_root  : {result_root}")
     print("=" * 72)
 
@@ -234,6 +411,7 @@ def main():
     env.set_loss_mode(args.loss)
     augmentation = StateAugmentation()
     summary = []
+    train_ls = TrainLS(args.ls_nb_granular) if args.use_ls else None
 
     for cluster in families:
         name = FAMILY_NAME[cluster]
@@ -288,24 +466,38 @@ def main():
             model.train()
             if args.train_modules != "all":
                 model.encoder.eval()
+            if "decoder" not in args.train_modules and args.train_modules != "all":
                 model.decoder.eval()
-                if model.prompt_net is not None:
+            else:
+                model.decoder.train()
+            if model.prompt_net is not None:
+                if args.train_modules in ("prompt", "prompt_film", "prompt_decoder", "all"):
                     model.prompt_net.train()
-            losses, costs = [], []
+                else:
+                    model.prompt_net.eval()
+            losses, costs, n_ls = [], [], 0
             seen = 0
             while seen < args.episodes:
                 bsz = min(args.batch_size, args.episodes - seen)
                 td, ptype = sample_family_batch(env, types, bsz, args.device)
+                td_init = td.clone(recurse=True)
                 optimizer.zero_grad(set_to_none=True)
                 with torch.amp.autocast(
                     device_type=args.device,
                     dtype=args.amp_dtype,
                     enabled=(args.device == "cuda"),
                 ):
-                    out = model(td, env, with_greedy=False)
+                    out = model(td, env, with_greedy=bool(args.use_ls))
                     batch_n = bsz
                     reward = out["reward"].view(-1, batch_n)
                     log_likelihood = out["log_likelihood"].sum(1).view(-1, batch_n)
+                    if train_ls is not None:
+                        tours = out["tours"].view(-1, batch_n, out["tours"].size(1))
+                        improvements = train_ls.run(td_init, reward, tours)
+                        reward, log_likelihood, n_rep = apply_ls_improvements(
+                            model, env, td_init, reward, log_likelihood, improvements
+                        )
+                        n_ls += n_rep
                     if args.loss == "po":
                         loss = fc.compute_po_loss(reward, log_likelihood, args.po_alpha)
                     else:
@@ -325,7 +517,7 @@ def main():
                 del td, out, reward, log_likelihood, loss
             print(
                 f"family{cluster} epoch {epoch:03d} loss={np.mean(losses):.4f} "
-                f"best_cost={np.mean(costs):.4f} seen={seen}"
+                f"best_cost={np.mean(costs):.4f} seen={seen} ls_better={n_ls}"
             )
             metrics = run_eval("finetune", epoch)
             ckpt_out = os.path.join(fam_dir, f"tuned-family{cluster}-{epoch}.pt")
@@ -371,6 +563,8 @@ def main():
     fc.save_json(os.path.join(result_root, "summary.json"), summary)
     print("Wrote", os.path.join(result_root, "summary.json"))
     print("Polar family specialization done")
+    if train_ls is not None:
+        train_ls.close()
 
 
 if __name__ == "__main__":

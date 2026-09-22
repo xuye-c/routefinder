@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=polar_family_ft_%j.out
 #SBATCH --error=polar_family_ft_%j.err
 #
@@ -67,7 +67,7 @@ echo "N_SIZE=${N_SIZE} FAMILIES=${FAMILIES} PATH_ID=${PATH_ID} EPOCH=${EPOCH}"
 echo "CLUSTER_CSV=${CLUSTER_CSV:-missing}"
 echo "DATA_DIR=${DATA_DIR}"
 echo "FT_EPOCHS=${FT_EPOCHS} EPISODES=${EPISODES} TRAIN_MODULES=${TRAIN_MODULES}"
-echo "LR=${LR} TRAIN_POMO=${TRAIN_POMO} LOSS=${LOSS}"
+echo "LR=${LR} TRAIN_POMO=${TRAIN_POMO} LOSS=${LOSS} USE_LS=${USE_LS}"
 
 echo "===== GPU ====="
 nvidia-smi || true
@@ -106,6 +106,7 @@ PY
 EXTRA=()
 if [ "${EVAL_ONLY}" = "1" ]; then EXTRA+=(--eval_only); fi
 if [ "${SKIP_ZERO_SHOT}" = "1" ]; then EXTRA+=(--skip_zero_shot); fi
+if [ "${USE_LS}" = "1" ]; then EXTRA+=(--use_ls); else EXTRA+=(--no_use_ls); fi
 
 echo "===== Start Polar family specialization ====="
 python -u finetune_polar_family.py \
@@ -127,6 +128,7 @@ python -u finetune_polar_family.py \
     --po_alpha "${PO_ALPHA}" \
     --train_pomo "${TRAIN_POMO}" \
     --train_modules "${TRAIN_MODULES}" \
+    --ls_nb_granular "${LS_NB_GRANULAR}" \
     ${EXTRA[@]+"${EXTRA[@]}"}
 
 echo "===== Done ====="
